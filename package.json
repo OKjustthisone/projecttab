@@ -1,0 +1,11 @@
+{
+  "name": "project-tab",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Project Tab browser extension",
+  "scripts": {
+    "check": "node --check background.js && node --check content.js && node --check shared.js && node --check sidepanel.js && node --check popup.js && node --check options.js",
+    "build": "npm run check"
+  }
+}

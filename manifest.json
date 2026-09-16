@@ -1,0 +1,64 @@
+{
+  "manifest_version": 3,
+  "name": "Project Tab",
+  "version": "0.1.0",
+  "description": "独立管理网页标签页的项目侧边栏，支持批量归档、笔记、AI 分析与同步。",
+  "minimum_chrome_version": "116",
+  "permissions": [
+    "storage",
+    "tabs",
+    "history",
+    "sidePanel",
+    "alarms"
+  ],
+  "host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "action": {
+    "default_title": "Project Tab · 添加当前标签页",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "options_page": "options.html",
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "commands": {
+    "open-project-tab": {
+      "suggested_key": {
+        "default": "Alt+Shift+P"
+      },
+      "description": "打开 Project Tab 侧边栏"
+    }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["edge-panel.html", "sidepanel.css", "sidepanel.js", "shared.js"],
+      "matches": ["http://*/*", "https://*/*"]
+    }
+  ]
+}
