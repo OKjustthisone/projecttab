@@ -49,10 +49,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .search-box:focus-within { border-color: rgba(22, 165, 104, .45); box-shadow: 0 0 0 3px rgba(22, 165, 104, .08); }
 .search-box input { flex: 1; min-width: 0; border: 0; outline: 0; color: var(--ink); background: transparent; }
 .search-box input::placeholder { color: var(--muted-2); }
-.summary-row { display: flex; gap: 7px; padding: 0 16px 12px; overflow-x: auto; }
-.summary-chip { flex: 1; min-width: 82px; padding: 8px 10px; background: var(--surface); border: 1px solid var(--line); border-radius: 11px; }
-.summary-chip strong { display: block; font-size: 16px; line-height: 1; }
-.summary-chip span { display: block; margin-top: 4px; color: var(--muted); font-size: 10px; white-space: nowrap; }
+.panel-summary { flex: 0 0 auto; padding: 7px 16px calc(7px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line); color: var(--muted); background: var(--surface); text-align: center; font-size: 10px; line-height: 1.4; }
 
 .project-list { min-height: 0; overflow: visible; padding: 0 10px 20px; }
 .history-list::-webkit-scrollbar, .note-blocks::-webkit-scrollbar { width: 6px; }
@@ -125,7 +122,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .empty-state p { margin: 7px 0 15px; line-height: 1.6; font-size: 12px; }
 .empty-state button { min-height: 32px; padding: 0 12px; border-radius: 9px; color: white; background: var(--green-600); cursor: pointer; }
 
-.toast { position: fixed; left: 50%; bottom: 18px; z-index: 50; max-width: calc(100% - 30px); padding: 9px 12px; border-radius: 9px; color: white; background: #215a42; box-shadow: var(--shadow); transform: translate(-50%, 10px); opacity: 0; pointer-events: none; transition: .2s ease; font-size: 12px; }
+.toast { position: fixed; left: 50%; bottom: 42px; z-index: 50; max-width: calc(100% - 30px); padding: 9px 12px; border-radius: 9px; color: white; background: #215a42; box-shadow: var(--shadow); transform: translate(-50%, 10px); opacity: 0; pointer-events: none; transition: .2s ease; font-size: 12px; }
 .toast.is-visible { transform: translate(-50%, 0); opacity: 1; }
 .toast.error { background: #a64343; }
 

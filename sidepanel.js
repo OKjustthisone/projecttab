@@ -38,8 +38,8 @@ function updatePanelPinButton() {
   if (!button) return;
   button.classList.toggle('is-active', panelPinned);
   button.setAttribute('aria-pressed', String(panelPinned));
-  button.setAttribute('aria-label', panelPinned ? '取消固定面板' : '固定面板');
-  button.title = panelPinned ? '取消固定面板' : '固定面板（推开网页）';
+  button.setAttribute('aria-label', panelPinned ? '取消固定面板' : '固定到浏览器侧边栏');
+  button.title = panelPinned ? '取消固定面板' : '固定到浏览器侧边栏（分屏）';
 }
 
 window.addEventListener('message', (event) => {
@@ -97,7 +97,7 @@ function faviconMarkup(tab) {
 
 function renderTopbar() {
   const edgePanelActions = isEdgePanel ? `
-        <button class="icon-button top-action-button${panelPinned ? ' is-active' : ''}" data-action="toggle-pin" aria-pressed="${panelPinned}" aria-label="${panelPinned ? '取消固定面板' : '固定面板'}" title="${panelPinned ? '取消固定面板' : '固定面板（推开网页）'}">${icon('pin', 15)}</button>
+        <button class="icon-button top-action-button${panelPinned ? ' is-active' : ''}" data-action="toggle-pin" aria-pressed="${panelPinned}" aria-label="${panelPinned ? '取消固定面板' : '固定到浏览器侧边栏'}" title="${panelPinned ? '取消固定面板' : '固定到浏览器侧边栏（分屏）'}">${icon('pin', 15)}</button>
         <button class="icon-button top-action-button" data-action="close-panel" aria-label="收起 Project Tab" title="收起 Project Tab">${icon('close', 15)}</button>` : '';
   return `
     <header class="topbar">
@@ -117,11 +117,7 @@ function renderSummary() {
   const projects = activeProjects.length;
   const tabs = activeProjects.reduce((total, project) => total + project.tabs.length, 0);
   const starred = activeProjects.reduce((total, project) => total + project.tabs.filter((tab) => tab.starred).length, 0);
-  return `<div class="summary-row">
-    <div class="summary-chip"><strong>${projects}</strong><span>个项目</span></div>
-    <div class="summary-chip"><strong>${tabs}</strong><span>个标签页</span></div>
-    <div class="summary-chip"><strong>${starred}</strong><span>个重要页面</span></div>
-  </div>`;
+  return `<footer class="panel-summary">${projects} 个项目 · ${tabs} 个标签页 · ${starred} 个重要页面</footer>`;
 }
 
 function renderTab(project, tab, isManage) {
@@ -230,7 +226,7 @@ function renderHistoryDrawer() {
           return `<label class="history-item"><input type="checkbox" data-history-key="${escapeHtml(key)}" data-history-index="${index}" ${checked ? 'checked' : ''}><span class="tab-favicon">${escapeHtml((item.title || item.url || 'P').slice(0, 1).toUpperCase())}</span><span class="tab-text"><strong title="${escapeHtml(item.title || item.url)}">${escapeHtml(item.title || '未命名页面')}</strong><small>${escapeHtml(item.url)}</small></span></label>`;
         }).join('') : '<div class="empty-state"><div class="empty-icon">∅</div><strong>没有找到网页历史</strong><p>换一个关键词，或先浏览几个网页。</p></div>'}
       </div>
-      <div class="history-footer"><span class="grow">已选 ${historySelected.size} 个</span><button class="modal-button primary" data-action="add-history" ${historySelected.size ? '' : 'disabled'}>${icon('plus', 13)} 添加到项目</button></div>
+      <div class="history-footer"><span class="grow" data-history-selection-count>已选 ${historySelected.size} 个</span><button class="modal-button primary" data-action="add-history" ${historySelected.size ? '' : 'disabled'}>${icon('plus', 13)} 添加到项目</button></div>
     </aside>`;
 }
 
@@ -243,16 +239,20 @@ function renderNoteBlock(block, index) {
   return `<div class="note-block"><span class="block-kind">${icon(block.type === 'image' ? 'image' : block.type === 'link' ? 'link' : 'note', 14)}</span>${content}<button class="remove-block" data-action="remove-note-block" data-index="${index}" title="移除">${icon('close', 12)}</button></div>`;
 }
 
+function renderNoteBlocks() {
+  const blocks = noteModal?.draft?.blocks || [];
+  return blocks.length ? blocks.map(renderNoteBlock).join('') : '<div class="note-muted">还没有笔记。你可以添加文字、链接或图片。</div>';
+}
+
 function renderNoteModal() {
   if (!noteModal) return '';
   const tab = getTab(noteModal.projectId, noteModal.tabId);
-  const blocks = noteModal.draft.blocks || [];
-  return `<div class="modal-backdrop" data-action="close-note">
+  return `<div class="modal-backdrop" data-backdrop-action="close-note">
     <section class="modal" role="dialog" aria-modal="true" aria-label="标签页笔记" data-modal="note">
       <div class="modal-header"><span class="folder-badge">${icon('note', 16)}</span><strong>标签页笔记</strong><span class="grow"></span><button class="icon-button" data-action="close-note" title="关闭">${icon('close')}</button></div>
       <div class="modal-body">
-        <div style="margin-bottom:12px"><strong>${escapeHtml(tab?.title || '未命名页面')}</strong><div style="margin-top:3px;color:var(--muted);font-size:11px">${escapeHtml(tab?.url || '')}</div></div>
-        <div class="note-blocks">${blocks.length ? blocks.map(renderNoteBlock).join('') : '<div class="note-muted">还没有笔记。你可以添加文字、链接或图片。</div>'}</div>
+        <div style="margin-bottom:12px"><strong>${escapeHtml(tab?.title || '未命名页面')}</strong></div>
+        <div class="note-blocks" data-note-blocks>${renderNoteBlocks()}</div>
         <div class="field"><label for="note-text">添加文字</label><textarea id="note-text" placeholder="记录你的判断、摘录或下一步行动…">${escapeHtml(noteModal.pendingText || '')}</textarea></div>
         <div class="note-input-row"><input id="note-link" placeholder="粘贴链接（可选标题）"><button class="mini-button" data-action="add-link-draft">${icon('link', 13)}添加链接</button></div>
         <div class="note-input-row"><input id="note-image-url" placeholder="图片 URL（可选）"><button class="mini-button" data-action="add-image-url">${icon('image', 13)}添加图片</button></div>
@@ -281,7 +281,7 @@ function renderProjectNoteModal() {
   if (!projectNoteModal) return '';
   const project = getProject(projectNoteModal.projectId);
   const currentAnalysis = projectNoteModal.analysis || project?.projectNote?.analysis;
-  return `<div class="modal-backdrop" data-action="close-project-note">
+  return `<div class="modal-backdrop" data-backdrop-action="close-project-note">
     <section class="modal" role="dialog" aria-modal="true" aria-label="项目笔记" data-modal="project-note">
       <div class="modal-header"><span class="folder-badge">${icon('spark', 16)}</span><strong>项目笔记 · ${escapeHtml(project?.name || '')}</strong><span class="grow"></span><button class="icon-button" data-action="close-project-note" title="关闭">${icon('close')}</button></div>
       <div class="modal-body">
@@ -298,7 +298,7 @@ function renderMoveModal() {
   if (!moveModal) return '';
   const source = getProject(moveModal.projectId);
   const targets = state.projects.filter((project) => project.id !== moveModal.projectId && !project.archived);
-  return `<div class="modal-backdrop" data-action="close-move">
+  return `<div class="modal-backdrop" data-backdrop-action="close-move">
     <section class="modal" role="dialog" aria-modal="true" aria-label="移动标签页">
       <div class="modal-header"><span class="folder-badge">${icon(moveModal.mode === 'copy' ? 'copy' : 'move', 16)}</span><strong>${moveModal.mode === 'copy' ? '复制' : '移动'}标签页</strong><span class="grow"></span><button class="icon-button" data-action="close-move">${icon('close')}</button></div>
       <div class="modal-body"><p style="margin:0 0 14px;color:var(--muted);line-height:1.6">将「${escapeHtml(source?.name || '')}」中选中的 ${selectedSet(moveModal.projectId).size} 个标签页${moveModal.mode === 'copy' ? '复制' : '移动'}到：</p><div class="field"><label for="move-target">目标项目</label><select id="move-target">${targets.map((project) => `<option value="${escapeHtml(project.id)}">${escapeHtml(project.name)} · ${project.tabs.length} 个标签页</option>`).join('')}</select></div></div>
@@ -342,9 +342,9 @@ function render() {
       <div class="search-box"><span>${icon('search', 15)}</span><input id="project-search" value="${escapeHtml(searchQuery)}" placeholder="搜索项目或标签页…"></div>
     </div>
     <div class="content">
-      ${renderSummary()}
       <div class="project-list">${renderNewProjectDraft()}${activeMarkup}${archivedMarkup}</div>
     </div>
+    ${renderSummary()}
     <div class="toast"></div>
     ${renderHistoryDrawer()}
     ${renderNoteModal()}
@@ -454,6 +454,19 @@ function renderHistorySearchPreservingFocus(value, selectionStart) {
   historyTimer = setTimeout(loadHistory, 280);
 }
 
+function updateHistorySelectionUI() {
+  const count = historySelected.size;
+  const label = document.querySelector('[data-history-selection-count]');
+  const addButton = document.querySelector('[data-action="add-history"]');
+  if (label) label.textContent = `已选 ${count} 个`;
+  if (addButton) addButton.disabled = count === 0;
+}
+
+function updateNoteBlocksUI() {
+  const container = document.querySelector('[data-note-blocks]');
+  if (container) container.innerHTML = renderNoteBlocks();
+}
+
 async function handleAction(action, element) {
   const projectId = element.dataset.projectId;
   const tabId = element.dataset.tabId;
@@ -472,9 +485,14 @@ async function handleAction(action, element) {
         await chrome.runtime.openOptionsPage();
         break;
       case 'toggle-pin':
-        panelPinned = !panelPinned;
-        updatePanelPinButton();
-        postPanelMessage('TOGGLE_PIN', { pinned: panelPinned });
+        try {
+          await apiCall('OPEN_SIDE_PANEL');
+          postPanelMessage('CLOSE_PANEL');
+        } catch {
+          panelPinned = !panelPinned;
+          updatePanelPinButton();
+          postPanelMessage('TOGGLE_PIN', { pinned: panelPinned });
+        }
         break;
       case 'close-panel':
         postPanelMessage('CLOSE_PANEL');
@@ -646,7 +664,7 @@ async function handleAction(action, element) {
         break;
       case 'remove-note-block':
         noteModal.draft.blocks.splice(Number(element.dataset.index), 1);
-        render();
+        updateNoteBlocksUI();
         break;
       case 'add-link-draft': {
         const input = document.querySelector('#note-link');
@@ -656,7 +674,8 @@ async function handleAction(action, element) {
         let url;
         try { url = new URL(value).href; } catch { throw new Error('请输入有效链接'); }
         noteModal.draft.blocks.push({ id: `block_${Date.now()}`, type: 'link', value: url, label: url, createdAt: new Date().toISOString() });
-        render();
+        input.value = '';
+        updateNoteBlocksUI();
         break;
       }
       case 'add-image-url': {
@@ -666,7 +685,8 @@ async function handleAction(action, element) {
         noteModal.pendingText = document.querySelector('#note-text')?.value.trim() || noteModal.pendingText || '';
         if (!/^https?:\/\//i.test(value)) throw new Error('图片 URL 需要以 http(s) 开头');
         noteModal.draft.blocks.push({ id: `block_${Date.now()}`, type: 'image', value, label: '远程图片', createdAt: new Date().toISOString() });
-        render();
+        input.value = '';
+        updateNoteBlocksUI();
         break;
       }
       case 'save-note': {
@@ -714,6 +734,12 @@ app.addEventListener('click', (event) => {
   if (actionElement) {
     event.stopPropagation();
     handleAction(actionElement.dataset.action, actionElement);
+    return;
+  }
+
+  const backdrop = event.target.closest('[data-backdrop-action]');
+  if (backdrop && event.target === backdrop) {
+    handleAction(backdrop.dataset.backdropAction, backdrop);
     return;
   }
 
@@ -781,14 +807,14 @@ app.addEventListener('change', async (event) => {
     const key = target.dataset.historyKey;
     if (target.checked) historySelected.add(key);
     else historySelected.delete(key);
-    render();
+    updateHistorySelectionUI();
   } else if (target.id === 'note-image-file' && target.files?.[0]) {
     noteModal.pendingText = document.querySelector('#note-text')?.value.trim() || noteModal.pendingText || '';
     const file = target.files[0];
     const reader = new FileReader();
     reader.addEventListener('load', () => {
       noteModal.draft.blocks.push({ id: `block_${Date.now()}`, type: 'image', value: String(reader.result), label: file.name, createdAt: new Date().toISOString() });
-      render();
+      updateNoteBlocksUI();
     });
     reader.readAsDataURL(file);
   }

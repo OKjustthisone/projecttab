@@ -4,6 +4,19 @@ const app = document.querySelector('#options-app');
 let state = null;
 let toastTimer = null;
 
+const AI_PRESETS = [
+  { id: 'local', label: '本地分析（无需 API）', endpoint: '', model: '' },
+  { id: 'openai', label: 'OpenAI', endpoint: 'https://api.openai.com/v1/chat/completions', model: 'gpt-4o-mini' },
+  { id: 'deepseek', label: 'DeepSeek', endpoint: 'https://api.deepseek.com/chat/completions', model: 'deepseek-v4-flash' },
+  { id: 'openrouter', label: 'OpenRouter', endpoint: 'https://openrouter.ai/api/v1/chat/completions', model: 'openrouter/free' },
+  { id: 'custom', label: '自定义兼容接口', endpoint: null, model: null }
+];
+
+function selectedAiPreset(ai) {
+  if (!ai.endpoint && !ai.model) return 'local';
+  return AI_PRESETS.find((preset) => preset.endpoint === ai.endpoint && preset.model === ai.model)?.id || 'custom';
+}
+
 function notify(message, error = false) {
   const node = document.querySelector('.toast');
   if (!node) return;
@@ -42,6 +55,7 @@ function render() {
       </div>
       <div>
         <section class="card"><div class="section-head"><div><h2>AI 笔记分析</h2><p>默认使用本地规则分析标题、来源和笔记；也可接入兼容 OpenAI Chat Completions 的自定义接口。</p></div></div>
+          <div class="field"><label for="ai-preset">常用服务预设</label><select id="ai-preset">${AI_PRESETS.map((preset) => `<option value="${preset.id}" ${selectedAiPreset(settings.ai) === preset.id ? 'selected' : ''}>${preset.label}</option>`).join('')}</select><div class="help">选择后自动填写 Endpoint 和推荐模型；API Key 仍需自行填写并只保存在本机。</div></div>
           <div class="field"><label for="ai-endpoint">自定义 AI Endpoint（可选）</label><input id="ai-endpoint" type="url" value="${escapeHtml(settings.ai.endpoint)}" placeholder="https://api.example.com/v1/chat/completions"></div>
           <div class="field"><label for="ai-model">模型名（可选）</label><input id="ai-model" type="text" value="${escapeHtml(settings.ai.model)}" placeholder="例如 gpt-4o-mini"></div>
           <div class="field"><label for="ai-key">API Key（可选）</label><input id="ai-key" type="password" value="${escapeHtml(settings.ai.apiKey)}" autocomplete="off" placeholder="仅保存在本机扩展存储中"></div>
@@ -136,9 +150,26 @@ app.addEventListener('input', (event) => {
     const value = document.querySelector('#trigger-range-value');
     if (value) value.textContent = `${start}% – ${end}%`;
   }
+  if (event.target.id === 'ai-endpoint' || event.target.id === 'ai-model') {
+    const preset = document.querySelector('#ai-preset');
+    if (preset) {
+      preset.value = selectedAiPreset({
+        endpoint: document.querySelector('#ai-endpoint')?.value.trim() || '',
+        model: document.querySelector('#ai-model')?.value.trim() || ''
+      });
+    }
+  }
 });
 
 app.addEventListener('change', async (event) => {
+  if (event.target.id === 'ai-preset') {
+    const preset = AI_PRESETS.find((item) => item.id === event.target.value);
+    if (preset && preset.endpoint !== null) {
+      document.querySelector('#ai-endpoint').value = preset.endpoint;
+      document.querySelector('#ai-model').value = preset.model;
+    }
+    return;
+  }
   if (event.target.id !== 'import-json' || !event.target.files?.[0]) return;
   try {
     const content = await event.target.files[0].text();

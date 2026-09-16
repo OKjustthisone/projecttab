@@ -16,17 +16,15 @@
   pageShiftStyle.textContent = `
     html[data-project-tab-pushed="true"] {
       box-sizing: border-box !important;
-      width: 100% !important;
       min-width: 0 !important;
-      padding-left: var(--project-tab-panel-width) !important;
       overflow-x: hidden !important;
     }
     html[data-project-tab-pushed="true"] > body {
       box-sizing: border-box !important;
-      width: auto !important;
-      max-width: 100% !important;
+      width: calc(100% - var(--project-tab-panel-width)) !important;
+      max-width: calc(100% - var(--project-tab-panel-width)) !important;
       min-width: 0 !important;
-      margin-left: 0 !important;
+      translate: var(--project-tab-panel-width) 0 !important;
     }
   `;
   (document.head || document.documentElement).append(pageShiftStyle);
