@@ -25,7 +25,7 @@ Project Tab 是一个 Chrome / Edge Manifest V3 扩展，用独立的数据模�
 
 ## 数据与同步
 
-本地数据存储在 `chrome.storage.local`，也支持导入/导出 JSON。浏览器同步使用 `chrome.storage.sync`；WebDAV 使用扩展后台请求 PUT / GET。图片笔记会以内嵌 data URL 保存，导出文件可能较大。
+本地数据存储在 `chrome.storage.local`，也支持导入/导出 JSON。浏览器同步使用 `chrome.storage.sync`；WebDAV 使用扩展后台请求 PUT / GET。WebDAV 地址可以填写专用文件地址，也可以填写目录地址；目录地址会自动使用其中的 `project-tab.json`。坚果云支持填写不带结尾斜杠的 `/dav/projecttab`，扩展会自动写入 `/dav/projecttab/project-tab.json`。设置页的“测试 WebDAV”会测试目录地址本身，并显示实际上传文件地址、HTTP 状态、DAV/Allow 响应头和服务器返回体，403 通常表示目标路径或账号没有写权限。图片笔记会以内嵌 data URL 保存，导出文件可能较大。
 
 ## 验证
 

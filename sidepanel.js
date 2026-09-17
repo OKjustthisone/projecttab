@@ -27,6 +27,7 @@ let confirmModal = null;
 let toastTimer = null;
 const isEdgePanel = window.location.pathname.endsWith('/edge-panel.html');
 let panelPinned = false;
+let edgePanelWindowId = null;
 
 function postPanelMessage(type, payload = {}) {
   if (!isEdgePanel) return;
@@ -40,6 +41,16 @@ function updatePanelPinButton() {
   button.setAttribute('aria-pressed', String(panelPinned));
   button.setAttribute('aria-label', panelPinned ? '取消固定面板' : '固定到浏览器侧边栏');
   button.title = panelPinned ? '取消固定面板' : '固定到浏览器侧边栏（分屏）';
+}
+
+async function cacheEdgePanelWindowId() {
+  if (!isEdgePanel) return;
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    edgePanelWindowId = tab?.windowId ?? null;
+  } catch {
+    edgePanelWindowId = null;
+  }
 }
 
 window.addEventListener('message', (event) => {
@@ -130,7 +141,7 @@ function renderTopbar() {
         <button class="icon-button top-action-button" data-action="close-panel" aria-label="收起 Project Tab" title="收起 Project Tab">${icon('close', 15)}</button>` : '';
   return `
     <header class="topbar">
-      <div class="brand-mark" aria-hidden="true">P·</div>
+      <div class="brand-mark"><img src="logo.png" alt="Project Tab"></div>
       <div class="brand-copy"><strong>Project Tab</strong><small>独立管理你的网页工作区</small></div>
       <div class="top-actions">
         <button class="icon-button top-action-button" data-action="sync" aria-label="手动刷新并同步" title="手动刷新并同步">${icon('refresh', 15)}</button>
@@ -549,7 +560,9 @@ async function handleAction(action, element) {
         break;
       case 'toggle-pin':
         try {
-          await apiCall('OPEN_SIDE_PANEL');
+          if (!chrome.sidePanel?.open || edgePanelWindowId == null) throw new Error('当前面板没有可用的浏览器窗口');
+          // 嵌入面板的按钮也必须直接使用这次点击产生的用户手势。
+          await chrome.sidePanel.open({ windowId: edgePanelWindowId });
           postPanelMessage('CLOSE_PANEL');
         } catch {
           panelPinned = !panelPinned;
@@ -889,4 +902,5 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   }
 });
 
+cacheEdgePanelWindowId();
 refresh();

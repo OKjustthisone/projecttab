@@ -3,6 +3,7 @@ import { apiCall, escapeHtml, icon } from './shared.js';
 const app = document.querySelector('#options-app');
 let state = null;
 let toastTimer = null;
+let sidePanelWindowId = null;
 
 const AI_PRESETS = [
   { id: 'local', label: '本地分析（无需 API）', endpoint: '', model: '' },
@@ -26,6 +27,13 @@ function notify(message, error = false) {
   toastTimer = setTimeout(() => node.classList.remove('show'), 2600);
 }
 
+function setSyncStatus(message, error = false) {
+  const node = document.querySelector('#sync-status');
+  if (!node) return;
+  node.textContent = message;
+  node.className = `status${error ? ' error' : ' ok'}`;
+}
+
 function render() {
   if (!state) {
     app.innerHTML = '<div class="settings-shell"><div class="card">正在加载设置…</div></div>';
@@ -35,7 +43,7 @@ function render() {
   const tabs = state.projects.reduce((sum, project) => sum + project.tabs.length, 0);
   const notes = state.projects.reduce((sum, project) => sum + project.tabs.reduce((tabSum, tab) => tabSum + (tab.note?.blocks?.length || 0), 0), 0);
   app.innerHTML = `<div class="settings-shell">
-    <header class="settings-hero"><div class="mark">P·</div><div class="hero-copy"><h1>Project Tab 设置</h1><p>管理边栏、同步方式与 AI 笔记分析。项目数据不会写入浏览器收藏夹。</p></div><button class="hero-link" data-action="open-sidepanel">${icon('menu', 14)}打开主面板</button></header>
+    <header class="settings-hero"><div class="mark"><img src="logo.png" alt="Project Tab"></div><div class="hero-copy"><h1>Project Tab 设置</h1><p>管理边栏、同步方式与 AI 笔记分析。项目数据不会写入浏览器收藏夹。</p></div><button class="hero-link" data-action="open-sidepanel">${icon('menu', 14)}打开主面板</button></header>
     <div class="grid">
       <div>
         <section class="card"><div class="section-head"><div><h2>页面边栏</h2><p>选择 Project Tab 如何出现在网页旁边。</p></div></div>
@@ -47,10 +55,10 @@ function render() {
         </section>
         <section class="card"><div class="section-head"><div><h2>同步方式</h2><p>支持浏览器账户同步或自有 WebDAV 文件。</p></div></div>
           <div class="field"><label for="sync-provider">默认同步目的地</label><select id="sync-provider"><option value="browser" ${settings.syncProvider === 'browser' ? 'selected' : ''}>浏览器账户同步（Chrome / Edge）</option><option value="webdav" ${settings.syncProvider === 'webdav' ? 'selected' : ''}>WebDAV</option></select></div>
-          <div class="field"><label for="webdav-url">WebDAV 文件地址</label><input id="webdav-url" type="url" value="${escapeHtml(settings.webdav.url)}" placeholder="https://dav.example.com/project-tab.json"><div class="help">建议使用一个专用 JSON 文件路径。账号密码仅保存在本机扩展存储中。</div></div>
+          <div class="field"><label for="webdav-url">WebDAV 文件或目录地址</label><input id="webdav-url" type="url" value="${escapeHtml(settings.webdav.url)}" placeholder="https://dav.jianguoyun.com/dav/projecttab/project-tab.json"><div class="help">可填写文件地址，也可填写目录地址；目录地址会自动使用其中的 project-tab.json，但父目录需先在坚果云中存在。坚果云可填写 /dav/projecttab 或 /dav/projecttab/，密码请使用第三方应用密码。账号密码仅保存在本机扩展存储中。</div></div>
           <div class="field"><label for="webdav-user">WebDAV 用户名</label><input id="webdav-user" type="text" value="${escapeHtml(settings.webdav.username)}" autocomplete="off"></div>
           <div class="field"><label for="webdav-password">WebDAV 密码</label><input id="webdav-password" type="password" value="${escapeHtml(settings.webdav.password)}" autocomplete="off"></div>
-          <div class="actions"><button class="button primary" data-action="save-settings">保存设置</button><button class="button" data-action="sync-browser-upload">${icon('upload', 14)}上传到浏览器同步</button><button class="button" data-action="sync-browser-download">${icon('download', 14)}从浏览器同步下载</button><button class="button" data-action="sync-webdav-upload">${icon('upload', 14)}上传到 WebDAV</button><button class="button" data-action="sync-webdav-download">${icon('download', 14)}从 WebDAV 下载</button></div><div class="status" id="sync-status"></div>
+          <div class="actions"><button class="button primary" data-action="save-settings">保存设置</button><button class="button" data-action="sync-browser-upload">${icon('upload', 14)}上传到浏览器同步</button><button class="button" data-action="sync-browser-download">${icon('download', 14)}从浏览器同步下载</button><button class="button" data-action="test-webdav">${icon('info', 14)}测试 WebDAV</button><button class="button" data-action="sync-webdav-upload">${icon('upload', 14)}上传到 WebDAV</button><button class="button" data-action="sync-webdav-download">${icon('download', 14)}从 WebDAV 下载</button></div><div class="status" id="sync-status"></div>
         </section>
       </div>
       <div>
@@ -74,11 +82,35 @@ function render() {
 
 async function load() {
   try {
-    state = await apiCall('GET_STATE');
+    const [nextState, windowId] = await Promise.all([apiCall('GET_STATE'), getCurrentWindowId()]);
+    state = nextState;
+    sidePanelWindowId = windowId;
     render();
   } catch (error) {
     app.innerHTML = `<div class="settings-shell"><div class="card">${escapeHtml(error.message)}</div></div>`;
   }
+}
+
+async function getCurrentWindowId() {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tab?.windowId != null) return tab.windowId;
+  } catch {
+    // fall through to the current browser window
+  }
+  try {
+    const currentWindow = await chrome.windows.getCurrent();
+    return currentWindow?.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function openSidePanelFromOptions() {
+  if (!chrome.sidePanel?.open) throw new Error('当前浏览器不支持 Side Panel API');
+  if (sidePanelWindowId == null) throw new Error('没有可用的浏览器窗口，请重新打开设置页');
+  // 保持 sidePanel.open 位于设置页按钮的用户点击调用栈内。
+  await chrome.sidePanel.open({ windowId: sidePanelWindowId });
 }
 
 function formSettings() {
@@ -117,15 +149,33 @@ async function saveSettings() {
 }
 
 async function sync(direction, provider) {
+  setSyncStatus(`正在${direction === 'upload' ? '上传' : '下载'}…`);
   if (provider) {
     const patch = { syncProvider: provider };
     const form = formSettings();
     patch.webdav = form.webdav;
     state = await apiCall('UPDATE_SETTINGS', { patch });
   }
-  state = await apiCall('SYNC', { direction });
+  const result = await apiCall('SYNC', { direction });
+  state = result.state;
   render();
+  setSyncStatus(`同步${direction === 'upload' ? '上传' : '下载'}完成${result.targetUrl ? `\n目标：${result.targetUrl}` : ''}`);
   notify(`同步${direction === 'upload' ? '上传' : '下载'}完成`);
+}
+
+async function testWebDav() {
+  const form = formSettings();
+  state = await apiCall('UPDATE_SETTINGS', { patch: { webdav: form.webdav } });
+  setSyncStatus('正在测试 WebDAV 端点…');
+  const result = await apiCall('WEBDAV_TEST');
+  const details = [result.hint, `目标：${result.targetUrl}`];
+  if (result.uploadTargetUrl && result.uploadTargetUrl !== result.targetUrl) details.push(`上传目标：${result.uploadTargetUrl}`);
+  if (result.dav) details.push(`DAV：${result.dav}`);
+  if (result.allow) details.push(`Allow：${result.allow}`);
+  if (result.body) details.push(`服务器返回：${result.body}`);
+  const failed = result.status >= 400;
+  setSyncStatus(details.join('\n'), failed);
+  notify(failed ? `WebDAV 返回 HTTP ${result.status}` : 'WebDAV 端点可访问', failed);
 }
 
 function exportJson() {
@@ -202,16 +252,22 @@ app.addEventListener('click', async (event) => {
       case 'sync-webdav-download':
         await sync('download', 'webdav');
         break;
+      case 'test-webdav':
+        await testWebDav();
+        break;
       case 'export-json':
         exportJson();
         break;
       case 'open-sidepanel':
-        await apiCall('OPEN_SIDE_PANEL');
+        await openSidePanelFromOptions();
         break;
       default:
         break;
     }
   } catch (error) {
+    if (button.dataset.action.includes('sync') || button.dataset.action === 'test-webdav') {
+      setSyncStatus(error.message, true);
+    }
     notify(error.message, true);
   }
 });

@@ -22,7 +22,7 @@ function render() {
   const usable = /^https?:\/\//i.test(activeTab.url || '');
   const projects = state.projects.filter((project) => !project.archived);
   app.innerHTML = `<div class="popup">
-    <header class="popup-header"><div class="mark">P·</div><div class="brand"><strong>Project Tab</strong><small>把当前页面放进一个项目</small></div><button class="popup-icon" data-action="open-sidepanel" title="打开主面板">${icon('menu', 16)}</button></header>
+    <header class="popup-header"><div class="mark"><img src="logo.png" alt="Project Tab"></div><div class="brand"><strong>Project Tab</strong><small>把当前页面放进一个项目</small></div><button class="popup-icon" data-action="open-sidepanel" title="打开主面板">${icon('menu', 16)}</button></header>
     <section class="active-card"><div class="eyebrow">当前标签页</div><div class="active-title" title="${escapeHtml(activeTab.title || '')}">${escapeHtml(activeTab.title || '未命名页面')}</div><div class="active-url" title="${escapeHtml(activeTab.url || '')}">${escapeHtml(activeTab.url || '此页面不可保存')}</div></section>
     ${usable && projects.length ? `<div class="field"><label for="project-select">选择项目</label><select id="project-select">${projects.map((project) => `<option value="${escapeHtml(project.id)}">${escapeHtml(project.name)} · ${project.tabs.length} 个标签页</option>`).join('')}</select><button class="primary" data-action="add-current">${icon('plus', 14)}添加到项目</button></div>` : usable ? '<div class="empty">当前没有可用项目，请先新建或恢复一个项目。</div>' : '<div class="empty">浏览器内部页面不能被保存，请切换到普通网页。</div>'}
     <section class="project-list"><div class="project-list-header"><span>快速选择项目</span><span>${projects.length} 个项目</span></div><div class="new-project"><input id="new-project-name" placeholder="新建项目文件夹"><button data-action="create-project" title="创建项目">${icon('folder-plus', 15)}</button></div>${projects.slice(0, 5).map((project) => `<button class="quick-project" data-action="quick-add" data-project-id="${escapeHtml(project.id)}"><span class="folder">${icon('folder', 13)}</span><span class="name">${escapeHtml(project.name)}</span><small>${project.tabs.length}</small></button>`).join('')}</section>
@@ -62,7 +62,10 @@ app.addEventListener('click', async (event) => {
       render();
       toast('项目已创建');
     } else if (action === 'open-sidepanel') {
-      await apiCall('OPEN_SIDE_PANEL');
+      if (!chrome.sidePanel?.open) throw new Error('当前浏览器不支持 Side Panel API');
+      if (activeTab?.windowId == null) throw new Error('没有可用的浏览器窗口');
+      // 必须在弹出菜单的点击手势中直接调用，不能转发到后台 Service Worker。
+      await chrome.sidePanel.open({ windowId: activeTab.windowId });
       window.close();
     } else if (action === 'open-options') {
       await chrome.runtime.openOptionsPage();

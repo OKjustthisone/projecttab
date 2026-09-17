@@ -11,6 +11,8 @@ import {
 } from './shared.js';
 
 const ALARM_NAME = 'project-tab-auto-sync';
+const WEBDAV_DEFAULT_FILENAME = 'project-tab.json';
+const JIANGUOYUN_WEBDAV_HOST = 'dav.jianguoyun.com';
 
 async function loadState() {
   const stored = await chrome.storage.local.get(STORAGE_KEY);
@@ -29,6 +31,166 @@ async function saveState(state) {
 
 function projectById(state, projectId) {
   return state.projects.find((project) => project.id === projectId);
+}
+
+function hasFileExtension(pathname) {
+  const lastSegment = String(pathname || '').split('/').filter(Boolean).pop() || '';
+  return /\.[^./]+$/.test(lastSegment);
+}
+
+function isJianguoyunDirectoryUrl(url) {
+  if (url.hostname.toLowerCase() !== JIANGUOYUN_WEBDAV_HOST) return false;
+  const pathname = url.pathname || '/';
+  // 坚果云官方示例支持用 /dav/<文件夹名>（不带结尾斜杠）访问文件夹。
+  return (pathname === '/dav' || pathname.startsWith('/dav/')) && !hasFileExtension(pathname);
+}
+
+function parseWebDavUrl(value) {
+  const raw = String(value || '').trim();
+  if (!raw) throw new Error('请先填写 WebDAV 文件或目录地址');
+
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error('WebDAV 地址不是有效 URL');
+  }
+  if (!['http:', 'https:'].includes(url.protocol)) {
+    throw new Error('WebDAV 地址必须使用 http 或 https');
+  }
+  return url;
+}
+
+function isWebDavDirectoryUrl(url) {
+  return url.pathname.endsWith('/') || isJianguoyunDirectoryUrl(url);
+}
+
+function normalizeWebDavUrl(value) {
+  const url = parseWebDavUrl(value);
+
+  // WebDAV PUT 必须指向“文件资源”，不能直接 PUT 到目录集合。
+  // 用户填目录地址时，使用固定文件名让上传可以创建/覆盖独立 JSON 文件。
+  // 坚果云的目录地址可以不带结尾斜杠，因此额外识别 /dav/<folder>。
+  if (isWebDavDirectoryUrl(url)) {
+    const directoryPath = url.pathname.endsWith('/') ? url.pathname : `${url.pathname}/`;
+    url.pathname = `${directoryPath}${WEBDAV_DEFAULT_FILENAME}`;
+  }
+  return url;
+}
+
+function normalizeWebDavDirectoryUrl(url) {
+  const directory = new URL(url);
+  if (!directory.pathname.endsWith('/')) directory.pathname = `${directory.pathname}/`;
+  return directory;
+}
+
+function encodeBasicCredentials(username, password) {
+  const bytes = new TextEncoder().encode(`${username}:${password}`);
+  let binary = '';
+  for (let index = 0; index < bytes.length; index += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
+  }
+  return btoa(binary);
+}
+
+function webDavHeaders(config, includeJson = false) {
+  const headers = {
+    Accept: 'application/json, text/plain, */*',
+    'Cache-Control': 'no-store'
+  };
+  if (includeJson) headers['Content-Type'] = 'application/json; charset=utf-8';
+  if (config.username) {
+    headers.Authorization = `Basic ${encodeBasicCredentials(config.username, config.password || '')}`;
+  }
+  return headers;
+}
+
+function safeWebDavTarget(url) {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.origin}${parsed.pathname}`;
+  } catch {
+    return '[invalid URL]';
+  }
+}
+
+async function responsePreview(response) {
+  try {
+    const text = await response.text();
+    return text.replace(/\s+/g, ' ').trim().slice(0, 600);
+  } catch {
+    return '';
+  }
+}
+
+function webDavStatusHint(status, direction) {
+  if (status === 401) return '认证失败：请检查 WebDAV 用户名、密码或应用专用密码。';
+  if (status === 403) return direction === 'upload'
+    ? '服务器拒绝写入：请确认目标是 WebDAV 文件地址而不是网页地址/目录地址，父目录已存在，账号拥有写入权限，并且服务端没有将该路径设为只读。'
+    : direction === 'test'
+      ? '服务器拒绝测试该 WebDAV 目录：请确认账号有目录读取权限，并使用服务商提供的 WebDAV 地址。'
+    : '服务器拒绝读取：请确认账号拥有该文件的读取权限，并使用服务商提供的 WebDAV 专用地址。';
+  if (status === 404) return direction === 'test'
+    ? '测试目标不存在：请先在 WebDAV 中创建父目录；目录地址可直接测试，文件地址可在首次上传时创建。'
+    : direction === 'upload'
+      ? '目标文件或父目录不存在：请先创建父目录，或把地址改成已存在的 WebDAV 目录/文件路径。'
+      : '目标文件不存在：请先完成一次上传，或把地址改成已存在的 WebDAV 文件路径。';
+  if (status === 405) return '服务器不允许该 WebDAV 方法：当前地址可能不是 WebDAV 端点。';
+  if (status === 409) return '父目录不存在或路径冲突：请先在 WebDAV 中创建目录。';
+  if (status === 507) return '服务器存储空间不足。';
+  return `服务器返回 HTTP ${status}。`;
+}
+
+async function throwWebDavError(response, targetUrl, direction) {
+  const preview = await responsePreview(response);
+  const details = [
+    `WebDAV ${direction === 'upload' ? '上传' : '下载'}失败（HTTP ${response.status}）`,
+    webDavStatusHint(response.status, direction),
+    `目标：${safeWebDavTarget(targetUrl)}`
+  ];
+  if (preview) details.push(`服务器返回：${preview}`);
+  throw new Error(details.join('\n'));
+}
+
+async function testWebDav(state) {
+  const config = state.settings.webdav;
+  const configuredUrl = parseWebDavUrl(config.url);
+  const uploadTarget = normalizeWebDavUrl(configuredUrl.toString());
+  const probeTarget = isWebDavDirectoryUrl(configuredUrl)
+    ? normalizeWebDavDirectoryUrl(configuredUrl)
+    : uploadTarget;
+  const targetUrl = probeTarget.toString();
+  let response;
+  try {
+    response = await fetch(targetUrl, {
+      method: 'PROPFIND',
+      headers: {
+        ...webDavHeaders(config),
+        Depth: '0'
+      },
+      cache: 'no-store'
+    });
+  } catch (error) {
+    throw new Error(`无法连接 WebDAV：${error?.message || '网络错误'}\n目标：${safeWebDavTarget(targetUrl)}`);
+  }
+
+  const preview = await responsePreview(response);
+  const result = {
+    status: response.status,
+    targetUrl: safeWebDavTarget(targetUrl),
+    uploadTargetUrl: safeWebDavTarget(uploadTarget),
+    dav: response.headers.get('DAV') || '',
+    allow: response.headers.get('Allow') || '',
+    body: preview
+  };
+  if (!response.ok) {
+    result.hint = webDavStatusHint(response.status, 'test');
+  } else {
+    result.hint = isWebDavDirectoryUrl(configuredUrl)
+      ? 'WebDAV 目录可访问；上传时会写入该目录下的 project-tab.json。'
+      : 'WebDAV 文件地址可访问；接下来可以执行上传。';
+  }
+  return result;
 }
 
 function tabById(project, tabId) {
@@ -119,25 +281,30 @@ async function performSync(direction, stateOverride) {
   }
 
   const config = state.settings.webdav;
-  if (!config?.url) throw new Error('请先在设置中填写 WebDAV 地址');
-  const headers = { 'Content-Type': 'application/json' };
-  if (config.username) {
-    headers.Authorization = `Basic ${btoa(`${config.username}:${config.password || ''}`)}`;
-  }
+  const targetUrl = normalizeWebDavUrl(config?.url);
+  const headers = webDavHeaders(config, direction === 'upload');
   if (direction === 'upload') {
-    const response = await fetch(config.url, {
+    const response = await fetch(targetUrl, {
       method: 'PUT',
       headers,
-      body: JSON.stringify(state, null, 2)
+      body: JSON.stringify(state, null, 2),
+      redirect: 'follow',
+      cache: 'no-store'
     });
-    if (!response.ok) throw new Error(`WebDAV 上传失败（HTTP ${response.status}）`);
-    return { provider: 'webdav', direction, state };
+    if (!response.ok) await throwWebDavError(response, targetUrl, direction);
+    return { provider: 'webdav', direction, state, targetUrl: safeWebDavTarget(targetUrl) };
   }
-  const response = await fetch(config.url, { method: 'GET', headers, cache: 'no-store' });
-  if (!response.ok) throw new Error(`WebDAV 下载失败（HTTP ${response.status}）`);
-  const remote = normalizeState(await response.json());
+  const response = await fetch(targetUrl, { method: 'GET', headers, redirect: 'follow', cache: 'no-store' });
+  if (!response.ok) await throwWebDavError(response, targetUrl, direction);
+  let remotePayload;
+  try {
+    remotePayload = JSON.parse(await response.text());
+  } catch {
+    throw new Error(`WebDAV 下载成功，但返回的不是有效 JSON。\n目标：${safeWebDavTarget(targetUrl)}`);
+  }
+  const remote = normalizeState(remotePayload);
   const next = await saveState(remote);
-  return { provider: 'webdav', direction, state: next };
+  return { provider: 'webdav', direction, state: next, targetUrl: safeWebDavTarget(targetUrl) };
 }
 
 async function scheduleSync(state) {
@@ -351,6 +518,8 @@ async function handleMessage(message, sender) {
       return updateSettings(message.patch || {});
     case 'SYNC':
       return performSync(message.direction || 'upload');
+    case 'WEBDAV_TEST':
+      return testWebDav(await loadState());
     case 'IMPORT_STATE':
       return saveState(message.state);
     case 'OPEN_SIDE_PANEL': {

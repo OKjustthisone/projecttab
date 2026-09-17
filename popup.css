@@ -17,7 +17,8 @@ button, input, select { font: inherit; }
 button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid rgba(22, 165, 104, .55); outline-offset: 1px; }
 .popup { padding: 15px; }
 .popup-header { display: flex; align-items: center; gap: 9px; margin-bottom: 14px; }
-.mark { width: 30px; height: 30px; display:grid; place-items:center; border-radius:10px; color:#fff; background:linear-gradient(145deg,#33bd80,#087549); font-weight:800; }
+.mark { width: 30px; height: 30px; display:grid; place-items:center; background:transparent; }
+.mark img { width:100%; height:100%; display:block; object-fit:contain; }
 .brand { flex:1; min-width:0; }
 .brand strong { display:block; font-size:14px; }
 .brand small { display:block; margin-top:3px; color:var(--muted); font-size:10px; }
