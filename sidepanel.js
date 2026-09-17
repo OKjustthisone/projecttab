@@ -88,6 +88,35 @@ function visibleTabs(project) {
   return project.tabs.filter((tab) => `${tab.title} ${tab.url} ${tab.domain}`.toLowerCase().includes(query));
 }
 
+function childProjects(projectId) {
+  return state?.projects.filter((project) => project.parentId === projectId) || [];
+}
+
+function visibleProjectIds() {
+  if (!state) return new Set();
+  const visible = new Set(state.projects.filter(projectMatches).map((project) => project.id));
+  const projectsById = new Map(state.projects.map((project) => [project.id, project]));
+
+  for (const project of state.projects) {
+    if (!visible.has(project.id)) continue;
+    let parent = projectsById.get(project.parentId);
+    const visited = new Set([project.id]);
+    while (parent && !visited.has(parent.id)) {
+      visible.add(parent.id);
+      visited.add(parent.id);
+      parent = projectsById.get(parent.parentId);
+    }
+  }
+  return visible;
+}
+
+function projectHasOpenMenu(project, visibleIds) {
+  if (projectMenuId === project.id) return true;
+  return childProjects(project.id)
+    .filter((child) => visibleIds.has(child.id))
+    .some((child) => projectHasOpenMenu(child, visibleIds));
+}
+
 function faviconMarkup(tab) {
   const initial = escapeHtml((tab.title || tab.domain || 'P').trim().slice(0, 1).toUpperCase());
   return tab.favicon
@@ -158,6 +187,7 @@ function renderManagementToolbar(project) {
 function renderProjectMenu(project) {
   if (projectMenuId !== project.id) return '';
   return `<div class="project-menu${project.archived ? ' opens-upward' : ''}" role="menu" aria-label="${escapeHtml(project.name)} 的更多操作">
+    ${project.archived ? '' : `<button data-action="create-subfolder" data-project-id="${escapeHtml(project.id)}" role="menuitem">${icon('folder-plus', 14)}<span>创建子文件夹</span></button>`}
     <button data-action="rename-project" data-project-id="${escapeHtml(project.id)}" role="menuitem">${icon('pencil', 14)}<span>重命名</span></button>
     <button data-action="archive-project" data-project-id="${escapeHtml(project.id)}" role="menuitem">${icon('archive', 14)}<span>${project.archived ? '恢复项目' : '归档项目'}</span></button>
     <button class="danger" data-action="delete-project" data-project-id="${escapeHtml(project.id)}" role="menuitem">${icon('trash', 14)}<span>删除项目</span></button>
@@ -172,22 +202,36 @@ function renderProjectTitle(project) {
   return `<div class="project-title"><strong>${escapeHtml(project.name)}</strong><small>${project.archived ? '已归档 · ' : ''}${project.tabs.length} 个标签页</small></div>`;
 }
 
-function renderNewProjectDraft() {
-  if (projectEditor?.mode !== 'create') return '';
-  return `<section class="project-card project-card-draft">
+function renderNewProjectDraft(parentId = null) {
+  if (projectEditor?.mode !== 'create' || (projectEditor.parentId || null) !== parentId) return '';
+  const isSubfolder = Boolean(parentId);
+  return `<section class="project-card project-card-draft${isSubfolder ? ' project-card-child' : ''}">
     <div class="project-header project-header-editing">
       <span class="project-chevron project-chevron-placeholder"></span>
       <span class="folder-badge project-folder">${icon('folder', 15)}</span>
-      <div class="project-title project-title-editor"><input class="project-name-editor" value="${escapeHtml(projectEditor.value)}" maxlength="80" placeholder="输入项目名称" aria-label="新项目名称"><small>Enter 保存 · Esc 取消</small></div>
+      <div class="project-title project-title-editor"><input class="project-name-editor" value="${escapeHtml(projectEditor.value)}" maxlength="80" placeholder="${isSubfolder ? '输入子文件夹名称' : '输入项目名称'}" aria-label="${isSubfolder ? '新子文件夹名称' : '新项目名称'}"><small>Enter 保存 · Esc 取消</small></div>
     </div>
   </section>`;
 }
 
-function renderProject(project) {
+function renderProjectChildren(project, visibleIds) {
+  const children = childProjects(project.id).filter((child) => visibleIds.has(child.id));
+  const draft = renderNewProjectDraft(project.id);
+  if (!draft && !children.length) return '';
+  return `<div class="project-children" aria-label="${escapeHtml(project.name)} 的子文件夹">
+    ${draft}${children.map((child) => renderProject(child, visibleIds)).join('')}
+  </div>`;
+}
+
+function renderProject(project, visibleIds) {
   const isManage = manageProjectId === project.id;
   const tabs = visibleTabs(project);
   const projectIsEmptyDueToSearch = searchQuery.trim() && !tabs.length && project.tabs.length;
   const menuOpen = projectMenuId === project.id;
+  const children = childProjects(project.id).filter((child) => visibleIds.has(child.id));
+  const draftForProject = projectEditor?.mode === 'create' && projectEditor.parentId === project.id;
+  const isExpanded = !project.collapsed || draftForProject;
+  const hasOpenMenu = projectHasOpenMenu(project, visibleIds);
   const quickActions = project.archived
     ? ''
     : isManage
@@ -195,19 +239,20 @@ function renderProject(project) {
       : `<button data-action="open-project-note" data-project-id="${escapeHtml(project.id)}" title="项目笔记 / AI 分析">${icon('spark', 15)}</button>
          <button data-action="open-history" data-project-id="${escapeHtml(project.id)}" title="从浏览器历史批量添加">${icon('plus', 15)}</button>
          <button data-action="manage-project" data-project-id="${escapeHtml(project.id)}" title="批量管理标签页">${icon('pencil', 15)}</button>`;
-  return `<section class="project-card${menuOpen ? ' has-menu' : ''}${project.archived ? ' is-archived' : ''}" data-project-id="${escapeHtml(project.id)}">
+  return `<section class="project-card${hasOpenMenu ? ' has-menu' : ''}${project.archived ? ' is-archived' : ''}" data-project-id="${escapeHtml(project.id)}">
     <div class="project-header" data-project-header="true">
-      <span class="project-chevron${project.collapsed ? '' : ' is-open'}">${icon('chevron', 14)}</span>
+      <span class="project-chevron${isExpanded ? ' is-open' : ''}">${icon('chevron', 14)}</span>
       <span class="folder-badge project-folder" style="color:${escapeHtml(project.color)}">${icon('folder', 15)}</span>
       ${renderProjectTitle(project)}
       <div class="project-actions${isManage ? ' is-visible' : ''}">${quickActions}</div>
       <button class="project-more-button${menuOpen ? ' is-active' : ''}" data-action="toggle-project-menu" data-project-id="${escapeHtml(project.id)}" aria-expanded="${menuOpen}" aria-label="更多项目操作" title="更多项目操作">${icon('menuDots', 16)}</button>
       ${renderProjectMenu(project)}
     </div>
-    ${project.collapsed ? '' : `<div class="project-body">
+    ${isExpanded ? `<div class="project-body">
       ${isManage ? renderManagementToolbar(project) : ''}
-      ${projectIsEmptyDueToSearch ? `<div class="tab-empty">没有匹配的标签页</div>` : tabs.length ? `<div class="tab-list">${tabs.map((tab) => renderTab(project, tab, isManage)).join('')}</div>` : `<div class="tab-empty"><strong>项目还是空的</strong>点击项目右侧的 +，从浏览器历史中批量添加页面。</div>`}
-    </div>`}
+      ${projectIsEmptyDueToSearch && !children.length ? `<div class="tab-empty">没有匹配的标签页</div>` : tabs.length ? `<div class="tab-list">${tabs.map((tab) => renderTab(project, tab, isManage)).join('')}</div>` : children.length || draftForProject ? '' : `<div class="tab-empty"><strong>项目还是空的</strong>点击项目右侧的 +，从浏览器历史中批量添加页面。</div>`}
+      ${renderProjectChildren(project, visibleIds)}
+    </div>` : ''}
   </section>`;
 }
 
@@ -325,16 +370,18 @@ function render() {
     app.innerHTML = '<div class="empty-state"><div class="empty-icon">…</div><strong>正在加载 Project Tab</strong><p>准备你的独立标签页空间。</p></div>';
     return;
   }
-  const matchingProjects = state.projects.filter(projectMatches);
-  const activeProjects = matchingProjects.filter((project) => !project.archived);
-  const archivedProjects = matchingProjects.filter((project) => project.archived);
+  const visibleIds = visibleProjectIds();
+  const matchingProjects = state.projects.filter((project) => visibleIds.has(project.id));
+  const roots = matchingProjects.filter((project) => !project.parentId || !visibleIds.has(project.parentId));
+  const activeProjects = roots.filter((project) => !project.archived);
+  const archivedProjects = roots.filter((project) => project.archived);
   const activeMarkup = activeProjects.length
-    ? activeProjects.map(renderProject).join('')
+    ? activeProjects.map((project) => renderProject(project, visibleIds)).join('')
     : projectEditor?.mode === 'create'
       ? ''
     : `<div class="empty-state compact"><div class="empty-icon">${icon('folder', 21)}</div><strong>${searchQuery ? '没有匹配的项目' : '创建第一个项目'}</strong><p>${searchQuery ? '试试项目名、网页标题或域名。' : '把研究、工作和灵感页面分开管理。'}</p>${searchQuery ? '' : `<button data-action="create-project">${icon('folder-plus', 14)} 创建项目文件夹</button>`}</div>`;
   const archivedMarkup = archivedProjects.length
-    ? `<div class="archived-section"><div class="archived-heading"><span>已归档</span><small>${archivedProjects.length}</small></div>${archivedProjects.map(renderProject).join('')}</div>`
+    ? `<div class="archived-section"><div class="archived-heading"><span>已归档</span><small>${archivedProjects.length}</small></div>${archivedProjects.map((project) => renderProject(project, visibleIds)).join('')}</div>`
     : '';
   app.innerHTML = `<div class="app-shell">
     <div class="panel-sticky-header">
@@ -375,7 +422,20 @@ function focusProjectNameEditor() {
 function createProject() {
   searchQuery = '';
   projectMenuId = null;
-  projectEditor = { mode: 'create', projectId: null, value: '' };
+  projectEditor = { mode: 'create', projectId: null, parentId: null, value: '' };
+  render();
+  focusProjectNameEditor();
+}
+
+async function createSubfolder(projectId) {
+  const project = getProject(projectId);
+  if (!project || project.archived) throw new Error('归档项目不能创建子文件夹');
+  searchQuery = '';
+  projectMenuId = null;
+  if (project.collapsed) {
+    state = await apiCall('TOGGLE_PROJECT', { projectId });
+  }
+  projectEditor = { mode: 'create', projectId: null, parentId: projectId, value: '' };
   render();
   focusProjectNameEditor();
 }
@@ -390,10 +450,10 @@ async function saveProjectEditor(value) {
     return;
   }
   try {
-    if (editor.mode === 'create') await apiCall('CREATE_PROJECT', { name });
+    if (editor.mode === 'create') await apiCall('CREATE_PROJECT', { name, parentId: editor.parentId || null });
     else await apiCall('RENAME_PROJECT', { projectId: editor.projectId, name });
     await refresh();
-    showToast(editor.mode === 'create' ? '项目已创建' : '项目已重命名');
+    showToast(editor.mode === 'create' ? (editor.parentId ? '子文件夹已创建' : '项目已创建') : '项目已重命名');
   } catch (error) {
     projectEditor = editor;
     render();
@@ -475,6 +535,9 @@ async function handleAction(action, element) {
     switch (action) {
       case 'create-project':
         createProject();
+        break;
+      case 'create-subfolder':
+        await createSubfolder(projectId);
         break;
       case 'sync':
         showToast('正在同步…');

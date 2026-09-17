@@ -31,11 +31,12 @@ export function createId(prefix = 'id') {
 export function createEmptyState() {
   const now = new Date().toISOString();
   return {
-    version: 2,
+    version: 3,
     updatedAt: now,
     projects: [
       {
         id: createId('project'),
+        parentId: null,
         name: '灵感收藏',
         color: '#18a76b',
         collapsed: false,
@@ -131,6 +132,7 @@ function normalizeProject(project) {
   const source = project && typeof project === 'object' ? project : {};
   return {
     id: asString(source.id, createId('project')),
+    parentId: asString(source.parentId) || null,
     name: asString(source.name, '未命名项目'),
     color: asString(source.color, '#18a76b'),
     collapsed: asBoolean(source.collapsed),
@@ -156,9 +158,29 @@ export function normalizeState(value) {
   const ai = settings.ai && typeof settings.ai === 'object' ? settings.ai : {};
   const projects = Array.isArray(source.projects) ? source.projects.map(normalizeProject) : fallback.projects;
   const sourceVersion = Number.isFinite(Number(source.version)) ? Number(source.version) : 1;
+  const projectIds = new Set(projects.map((project) => project.id));
+  const projectsById = new Map(projects.map((project) => [project.id, project]));
+
+  for (const project of projects) {
+    if (!project.parentId || project.parentId === project.id || !projectIds.has(project.parentId)) {
+      project.parentId = null;
+      continue;
+    }
+
+    const visited = new Set([project.id]);
+    let parentId = project.parentId;
+    while (parentId) {
+      if (visited.has(parentId)) {
+        project.parentId = null;
+        break;
+      }
+      visited.add(parentId);
+      parentId = projectsById.get(parentId)?.parentId || null;
+    }
+  }
 
   return {
-    version: 2,
+    version: 3,
     updatedAt: asString(source.updatedAt, fallback.updatedAt),
     projects: projects.length ? projects : fallback.projects,
     settings: {

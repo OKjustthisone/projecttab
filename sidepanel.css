@@ -85,6 +85,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .project-menu button.danger { color: var(--danger); }
 .project-menu button.danger:hover { background: #fff0f0; }
 .project-body { padding: 0 7px 8px 12px; border-top: 1px solid #edf4ef; }
+.project-children { margin: 9px 0 0 3px; padding-left: 8px; border-left: 1px solid var(--line); }
+.project-children > .project-card { margin-bottom: 7px; }
+.project-children > .project-card:last-child { margin-bottom: 0; }
+.project-card-child .project-header { min-height: 47px; padding-left: 8px; }
 .archived-section { margin-top: 18px; padding-top: 10px; border-top: 1px solid var(--line); }
 .archived-heading { display: flex; align-items: center; gap: 6px; padding: 0 5px 8px; color: var(--muted); font-size: 11px; font-weight: 700; }
 .archived-heading small { min-width: 18px; height: 18px; display: grid; place-items: center; border-radius: 9px; background: var(--surface); color: var(--muted); font-size: 9px; }

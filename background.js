@@ -217,8 +217,12 @@ async function handleMessage(message, sender) {
     case 'CREATE_PROJECT': {
       const state = await loadState();
       const now = new Date().toISOString();
+      const parentId = typeof message.parentId === 'string' ? message.parentId.trim() || null : null;
+      const parent = parentId ? projectById(state, parentId) : null;
+      if (parentId && (!parent || parent.archived)) throw new Error('请选择有效的父项目');
       state.projects.unshift({
         id: createId('project'),
+        parentId,
         name: String(message.name || '新项目').trim() || '新项目',
         color: message.color || '#18a76b',
         collapsed: false,
