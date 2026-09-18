@@ -16,7 +16,7 @@ Project Tab 是一个 Chrome / Edge Manifest V3 扩展，用独立的数据模�
 - 项目右侧铅笔：进入管理状态；每个标签页右侧显示删除按钮，也可批量移动、复制或删除。
 - 项目右侧三点菜单：创建子文件夹、重命名、归档/恢复或删除项目；归档项目会移到列表底部的“已归档”区域，删除使用面板内确认框。
 - 标签页星标：标记重要页面；笔记图标：记录文字、链接和图片。
-- 项目右侧 ✦：生成本地项目摘要、来源聚类、关键词和标签页关联，也可在设置中接入自定义 AI Endpoint。
+- 项目右侧 ✦：生成本地项目摘要、来源聚类、关键词和标签页关联，也可在设置中接入自定义 AI Endpoint；设置页提供 AI 模型连接测试。
 - 主面板右上角同步按钮：按设置上传到浏览器同步或 WebDAV。
 
 设置中的边缘触发范围按网页高度计算：0% 是顶部，100% 是底部；例如设置为 20%–30% 后，鼠标靠近左侧且位于这段高度范围内才会打开面板。触发条宽度默认为 0px，视觉上隐藏，但页面最左侧保留 4px 的无形触发区域。
@@ -25,7 +25,7 @@ Project Tab 是一个 Chrome / Edge Manifest V3 扩展，用独立的数据模�
 
 ## 数据与同步
 
-本地数据存储在 `chrome.storage.local`，也支持导入/导出 JSON。浏览器同步使用 `chrome.storage.sync`；WebDAV 使用扩展后台请求 PUT / GET。WebDAV 地址可以填写专用文件地址，也可以填写目录地址；目录地址会自动使用其中的 `project-tab.json`。坚果云支持填写不带结尾斜杠的 `/dav/projecttab`，扩展会自动写入 `/dav/projecttab/project-tab.json`。设置页的“测试 WebDAV”会测试目录地址本身，并显示实际上传文件地址、HTTP 状态、DAV/Allow 响应头和服务器返回体，403 通常表示目标路径或账号没有写权限。图片笔记会以内嵌 data URL 保存，导出文件可能较大。
+本地数据存储在 `chrome.storage.local`，也支持导入/导出 JSON。浏览器同步使用 `chrome.storage.sync`；WebDAV 使用扩展后台请求 PUT / GET。WebDAV 地址可以填写专用文件地址，也可以填写目录地址；目录地址会自动使用其中的 `project-tab.json`。坚果云支持填写不带结尾斜杠的 `/dav/projecttab`，扩展会自动写入 `/dav/projecttab/project-tab.json`。设置页的“测试 WebDAV”会测试目录地址本身，并显示实际上传文件地址、HTTP 状态、DAV/Allow 响应头和服务器返回体；AI 设置提供模型连接测试，非 JSON、HTML 错误页和 SSE 响应会被分别诊断或兼容处理。图片笔记会以内嵌 data URL 保存，导出文件可能较大。
 
 ## 验证
 

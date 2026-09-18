@@ -34,6 +34,13 @@ function setSyncStatus(message, error = false) {
   node.className = `status${error ? ' error' : ' ok'}`;
 }
 
+function setAiStatus(message, error = false) {
+  const node = document.querySelector('#ai-status');
+  if (!node) return;
+  node.textContent = message;
+  node.className = `status${error ? ' error' : ' ok'}`;
+}
+
 function render() {
   if (!state) {
     app.innerHTML = '<div class="settings-shell"><div class="card">正在加载设置…</div></div>';
@@ -67,6 +74,7 @@ function render() {
           <div class="field"><label for="ai-endpoint">自定义 AI Endpoint（可选）</label><input id="ai-endpoint" type="url" value="${escapeHtml(settings.ai.endpoint)}" placeholder="https://api.example.com/v1/chat/completions"></div>
           <div class="field"><label for="ai-model">模型名（可选）</label><input id="ai-model" type="text" value="${escapeHtml(settings.ai.model)}" placeholder="例如 gpt-4o-mini"></div>
           <div class="field"><label for="ai-key">API Key（可选）</label><input id="ai-key" type="password" value="${escapeHtml(settings.ai.apiKey)}" autocomplete="off" placeholder="仅保存在本机扩展存储中"></div>
+          <div class="actions"><button class="button" data-action="test-ai">${icon('info', 14)}测试 AI 模型连接</button></div><div class="status" id="ai-status"></div>
           <div class="subtle">没有配置 Endpoint 时，点击项目名右侧的 ✦ 仍会生成本地摘要、来源聚类、关键词和标签页关联。需要外部模型时，请确认服务端的隐私与跨域策略。</div>
         </section>
         <section class="card"><div class="section-head"><div><h2>数据管理</h2><p>导出的是 Project Tab 自己的 JSON，不含浏览器收藏夹。</p></div></div>
@@ -178,6 +186,20 @@ async function testWebDav() {
   notify(failed ? `WebDAV 返回 HTTP ${result.status}` : 'WebDAV 端点可访问', failed);
 }
 
+async function testAi() {
+  state = await apiCall('UPDATE_SETTINGS', { patch: { ai: formSettings().ai } });
+  setAiStatus('正在测试 AI 模型连接…');
+  const result = await apiCall('AI_TEST');
+  const details = [
+    'AI 模型连接成功',
+    `模型：${result.model}`,
+    `地址：${result.endpoint}`
+  ];
+  if (result.reply) details.push(`模型回复：${result.reply}`);
+  setAiStatus(details.join('\n'));
+  notify('AI 模型连接成功');
+}
+
 function exportJson() {
   const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -255,6 +277,9 @@ app.addEventListener('click', async (event) => {
       case 'test-webdav':
         await testWebDav();
         break;
+      case 'test-ai':
+        await testAi();
+        break;
       case 'export-json':
         exportJson();
         break;
@@ -268,6 +293,7 @@ app.addEventListener('click', async (event) => {
     if (button.dataset.action.includes('sync') || button.dataset.action === 'test-webdav') {
       setSyncStatus(error.message, true);
     }
+    if (button.dataset.action === 'test-ai') setAiStatus(error.message, true);
     notify(error.message, true);
   }
 });

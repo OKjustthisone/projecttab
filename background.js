@@ -345,26 +345,14 @@ async function analyzeProject(projectId) {
     url: tab.url,
     note: (tab.note?.blocks || []).map((block) => block.value).join('\n')
   }));
-  const headers = { 'Content-Type': 'application/json' };
-  if (state.settings.ai.apiKey) headers.Authorization = `Bearer ${state.settings.ai.apiKey}`;
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({
-      model: state.settings.ai.model || undefined,
-      messages: [
-        {
-          role: 'system',
-          content: '你是 Project Tab 的知识整理助手。请用中文输出简洁的项目摘要、标签页关联和下一步建议。不要编造页面没有提供的事实。'
-        },
-        { role: 'user', content: JSON.stringify({ project: project.name, tabs: notes }) }
-      ],
-      temperature: 0.2
-    })
-  });
-  if (!response.ok) throw new Error(`AI 接口返回 HTTP ${response.status}`);
-  const result = await response.json();
-  const text = result.choices?.[0]?.message?.content || result.output_text || result.text;
+  const result = await requestAiModel(state.settings.ai, [
+    {
+      role: 'system',
+      content: '你是 Project Tab 的知识整理助手。请用中文输出简洁的项目摘要、标签页关联和下一步建议。不要编造页面没有提供的事实。'
+    },
+    { role: 'user', content: JSON.stringify({ project: project.name, tabs: notes }) }
+  ], { temperature: 0.2 });
+  const text = extractAiText(result);
   if (!text) throw new Error('AI 接口没有返回可读文本');
   return {
     ...local,
@@ -372,6 +360,127 @@ async function analyzeProject(projectId) {
     overview: text,
     rawText: text,
     generatedAt: new Date().toISOString()
+  };
+}
+
+function safeAiEndpoint(endpoint) {
+  try {
+    const url = new URL(endpoint);
+    return `${url.origin}${url.pathname}`;
+  } catch {
+    return String(endpoint || '');
+  }
+}
+
+function aiResponsePreview(raw) {
+  return String(raw || '').replace(/\s+/g, ' ').trim().slice(0, 500);
+}
+
+function extractAiText(result) {
+  if (typeof result === 'string') return result.trim();
+  if (!result || typeof result !== 'object') return '';
+  if (typeof result.__text === 'string') return result.__text.trim();
+
+  const content = result.choices?.[0]?.message?.content;
+  if (typeof content === 'string') return content.trim();
+  if (Array.isArray(content)) {
+    return content.map((part) => typeof part === 'string' ? part : part?.text || '').join('').trim();
+  }
+  const delta = result.choices?.[0]?.delta?.content;
+  if (typeof delta === 'string') return delta.trim();
+  if (typeof result.choices?.[0]?.text === 'string') return result.choices[0].text.trim();
+  if (typeof result.output_text === 'string') return result.output_text.trim();
+  if (typeof result.text === 'string') return result.text.trim();
+  if (typeof result.response === 'string') return result.response.trim();
+
+  const geminiParts = result.candidates?.[0]?.content?.parts;
+  if (Array.isArray(geminiParts)) return geminiParts.map((part) => part?.text || '').join('').trim();
+  const responseParts = result.output?.flatMap?.((item) => item?.content || []) || [];
+  if (responseParts.length) return responseParts.map((part) => part?.text || '').join('').trim();
+  return '';
+}
+
+function parseAiResponse(raw) {
+  const normalized = String(raw || '').replace(/^\uFEFF/, '').trim();
+  if (!normalized) return null;
+  try {
+    return JSON.parse(normalized);
+  } catch {
+    const chunks = normalized
+      .split(/\r?\n/)
+      .filter((line) => line.trim().startsWith('data:'))
+      .map((line) => line.trim().slice(5).trim())
+      .filter((line) => line && line !== '[DONE]')
+      .map((line) => {
+        try {
+          return extractAiText(JSON.parse(line));
+        } catch {
+          return '';
+        }
+      })
+      .filter(Boolean);
+    if (chunks.length) return { __text: chunks.join('') };
+    return null;
+  }
+}
+
+async function requestAiModel(config, messages, options = {}) {
+  const endpoint = String(config?.endpoint || '').trim();
+  if (!endpoint) throw new Error('请先填写 AI Endpoint');
+  const headers = {
+    Accept: 'application/json, text/plain, */*',
+    'Content-Type': 'application/json'
+  };
+  if (config.apiKey) headers.Authorization = `Bearer ${config.apiKey}`;
+
+  let response;
+  try {
+    response = await fetch(endpoint, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        model: config.model || undefined,
+        messages,
+        temperature: options.temperature ?? 0.2,
+        stream: false
+      }),
+      redirect: 'follow',
+      cache: 'no-store'
+    });
+  } catch (error) {
+    throw new Error(`无法连接 AI 接口：${error?.message || '网络错误'}\n地址：${safeAiEndpoint(endpoint)}`);
+  }
+
+  const raw = await response.text();
+  const result = parseAiResponse(raw);
+  if (!response.ok) {
+    const detail = result?.error?.message || result?.message || aiResponsePreview(raw);
+    throw new Error(`AI 接口返回 HTTP ${response.status}${detail ? `\n服务器返回：${detail}` : ''}\n地址：${safeAiEndpoint(endpoint)}`);
+  }
+  if (!result) {
+    const contentType = response.headers.get('content-type') || '未知';
+    const plainText = String(raw || '').trim();
+    const looksLikeHtml = /^\s*<(?:!doctype|html|head|body|title)\b/i.test(plainText);
+    if (response.ok && plainText && !looksLikeHtml && /^(?:text\/plain|text\/event-stream)/i.test(contentType)) {
+      return { __text: plainText };
+    }
+    throw new Error(`AI 接口返回的不是有效 JSON（HTTP ${response.status}）。请确认 Endpoint 是 Chat Completions 接口，而不是网页地址。\nContent-Type：${contentType}\n服务器返回：${aiResponsePreview(raw) || '空响应'}\n地址：${safeAiEndpoint(endpoint)}`);
+  }
+  return result;
+}
+
+async function testAiModel(state) {
+  const config = state.settings.ai;
+  const result = await requestAiModel(config, [
+    { role: 'system', content: '这是连接测试。请只回复“连接成功”，不要输出 JSON、Markdown 或解释。' },
+    { role: 'user', content: '连接测试，请回复：连接成功' }
+  ], { temperature: 0 });
+  const reply = extractAiText(result);
+  if (!reply) throw new Error('AI 接口已响应，但响应中没有可读文本');
+  return {
+    endpoint: safeAiEndpoint(config.endpoint),
+    model: config.model || '服务端默认模型',
+    reply: reply.slice(0, 240)
   };
 }
 
@@ -504,6 +613,8 @@ async function handleMessage(message, sender) {
     }
     case 'ANALYZE_PROJECT':
       return analyzeProject(message.projectId);
+    case 'AI_TEST':
+      return testAiModel(await loadState());
     case 'DELETE_TABS': {
       const state = await loadState();
       const project = projectById(state, message.projectId);
