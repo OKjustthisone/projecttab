@@ -21,6 +21,7 @@ let historyQuery = '';
 let historyTimer = null;
 let noteModal = null;
 let projectNoteModal = null;
+let annotationModal = null;
 let moveModal = null;
 let projectMenuId = null;
 let projectEditor = null;
@@ -96,18 +97,30 @@ function recoverFromInvalidContext() {
   setTimeout(() => window.location.reload(), 1200);
 }
 
+function annotationSearchText(tab) {
+  return (tab.annotations || [])
+    .filter((item) => !item.deletedAt)
+    .map((item) => `${item.comment || ''} ${item.quote?.exact || ''}`)
+    .join(' ')
+    .trim();
+}
+
+function liveAnnotations(tab) {
+  return (tab?.annotations || []).filter((item) => !item.deletedAt);
+}
+
 function projectMatches(project) {
   const query = searchQuery.trim().toLowerCase();
   if (!query) return true;
   return project.name.toLowerCase().includes(query) || project.tabs.some((tab) =>
-    `${tab.title} ${tab.url} ${tab.domain}`.toLowerCase().includes(query)
+    `${tab.title} ${tab.url} ${tab.domain} ${annotationSearchText(tab)}`.toLowerCase().includes(query)
   );
 }
 
 function visibleTabs(project) {
   const query = searchQuery.trim().toLowerCase();
   if (!query) return project.tabs;
-  return project.tabs.filter((tab) => `${tab.title} ${tab.url} ${tab.domain}`.toLowerCase().includes(query));
+  return project.tabs.filter((tab) => `${tab.title} ${tab.url} ${tab.domain} ${annotationSearchText(tab)}`.toLowerCase().includes(query));
 }
 
 function childProjects(projectId) {
@@ -174,6 +187,7 @@ function renderSummary() {
 function renderTab(project, tab, isManage) {
   const selected = selectedSet(project.id).has(tab.id);
   const noteReady = tab.note?.blocks?.length > 0;
+  const marks = liveAnnotations(tab).length;
   const secondaryAction = isManage
     ? `<button class="tab-action danger" data-action="delete-tab" data-project-id="${escapeHtml(project.id)}" data-tab-id="${escapeHtml(tab.id)}" title="删除标签页">${icon('trash', 14)}</button>`
     : `<button class="tab-action${noteReady ? ' note-ready' : ''}" data-action="open-note" data-project-id="${escapeHtml(project.id)}" data-tab-id="${escapeHtml(tab.id)}" title="打开标签页笔记">${icon('note', 14)}</button>`;
@@ -183,10 +197,11 @@ function renderTab(project, tab, isManage) {
       ${faviconMarkup(tab)}
       <div class="tab-text">
         <strong title="${escapeHtml(tab.title)}">${escapeHtml(tab.title || '未命名页面')}</strong>
-        <small>${escapeHtml(tab.domain || tab.url)}${noteReady ? ` · ${tab.note.blocks.length} 条笔记` : ''}</small>
+        <small>${escapeHtml(tab.domain || tab.url)}${noteReady ? ` · ${tab.note.blocks.length} 条笔记` : ''}${marks ? ` · ${marks} 处标记` : ''}</small>
       </div>
-      <div class="tab-actions${isManage || tab.starred || noteReady ? ' is-visible' : ''}">
+      <div class="tab-actions${isManage || tab.starred || noteReady || marks ? ' is-visible' : ''}">
         <button class="tab-action${tab.starred ? ' starred' : ''}" data-action="toggle-star" data-project-id="${escapeHtml(project.id)}" data-tab-id="${escapeHtml(tab.id)}" title="${tab.starred ? '取消星标' : '标记重要'}">${icon('star', 14)}</button>
+        ${isManage ? '' : `<button class="tab-action${marks ? ' note-ready' : ''}" data-action="open-annotations" data-project-id="${escapeHtml(project.id)}" data-tab-id="${escapeHtml(tab.id)}" title="查看页面标记">${icon('highlight', 14)}</button>`}
         ${secondaryAction}
       </div>
     </div>`;
@@ -331,6 +346,48 @@ function renderNoteModal() {
   </div>`;
 }
 
+function annotationColorDot(color) {
+  return `<span class="annotation-dot" style="--dot:var(--anno-${escapeHtml(color)}, #ffd60a)"></span>`;
+}
+
+function renderAnnotationItem(item) {
+  const editing = annotationModal?.editingId === item.id;
+  return `<div class="annotation-item" data-annotation-id="${escapeHtml(item.id)}">
+    <div class="annotation-head">
+      ${annotationColorDot(item.color)}
+      <span class="annotation-quote" title="${escapeHtml(item.quote?.exact || '')}">${escapeHtml(truncate(item.quote?.exact || '', 60))}</span>
+      <span class="grow"></span>
+      <button class="icon-button annotation-icon" data-action="focus-annotation" data-annotation-id="${escapeHtml(item.id)}" title="打开页面并定位">${icon('external', 13)}</button>
+      <button class="icon-button annotation-icon" data-action="delete-annotation" data-annotation-id="${escapeHtml(item.id)}" title="删除标记">${icon('trash', 13)}</button>
+    </div>
+    ${editing
+      ? `<textarea class="annotation-editor" data-role="annotation-editor" placeholder="评论或笔记…">${escapeHtml(item.comment || '')}</textarea>
+         <div class="annotation-edit-actions"><span class="grow"></span><button class="mini-button" data-action="cancel-annotation-edit">取消</button><button class="mini-button primary" data-action="save-annotation-comment" data-annotation-id="${escapeHtml(item.id)}">保存</button></div>`
+      : `<div class="annotation-comment"${item.comment ? '' : ' data-empty="true"'}>${item.comment ? escapeHtml(item.comment) : '暂无评论，点击编辑添加'}
+         <button class="icon-button annotation-icon annotation-edit" data-action="edit-annotation" data-annotation-id="${escapeHtml(item.id)}" title="编辑评论">${icon('pencil', 12)}</button></div>`}
+    <div class="annotation-meta">${formatDate(item.updatedAt)}</div>
+  </div>`;
+}
+
+function renderAnnotationModal() {
+  if (!annotationModal) return '';
+  const tab = getTab(annotationModal.projectId, annotationModal.tabId);
+  const items = liveAnnotations(tab);
+  return `<div class="modal-backdrop" data-backdrop-action="close-annotations">
+    <section class="modal" role="dialog" aria-modal="true" aria-label="页面标记" data-modal="annotations">
+      <div class="modal-header"><span class="folder-badge">${icon('highlight', 16)}</span><strong>页面标记</strong><span class="grow"></span><button class="icon-button" data-action="close-annotations" title="关闭">${icon('close')}</button></div>
+      <div class="modal-body">
+        <div style="margin-bottom:12px"><strong>${escapeHtml(tab?.title || '未命名页面')}</strong></div>
+        ${items.length
+          ? `<div class="annotation-list">${items.map(renderAnnotationItem).join('')}</div>`
+          : `<div class="note-muted">还没有标记。在网页中选中文字即可高亮并添加评论，标记会自动同步。</div>`}
+        <div style="margin-top:12px;color:var(--muted);font-size:10px">标记随本条目保存与同步；从项目删除此页面时标记一并删除。</div>
+      </div>
+      <div class="modal-footer"><button class="modal-button primary" data-action="close-annotations">完成</button></div>
+    </section>
+  </div>`;
+}
+
 function renderAnalysis(analysis) {
   if (!analysis) return '<div class="note-muted">点击“分析项目”后，将按项目内的标题、来源和标签页笔记生成摘要与关联。</div>';
   const domainText = analysis.domains?.length ? analysis.domains.map((item) => `${escapeHtml(item.name)} (${item.count})`).join('、') : '暂无来源聚类';
@@ -417,6 +474,7 @@ function render() {
     <div class="toast"></div>
     ${renderHistoryDrawer()}
     ${renderNoteModal()}
+    ${renderAnnotationModal()}
     ${renderProjectNoteModal()}
     ${renderMoveModal()}
     ${renderConfirmModal()}
@@ -506,6 +564,7 @@ function openNote(projectId, tabId) {
   const tab = getTab(projectId, tabId);
   noteModal = { projectId, tabId, draft: clone(tab?.note || { blocks: [], updatedAt: null }) };
   projectNoteModal = null;
+  annotationModal = null;
   moveModal = null;
   render();
 }
@@ -514,6 +573,7 @@ function openProjectNote(projectId) {
   const project = getProject(projectId);
   projectNoteModal = { projectId, analysis: project?.projectNote?.analysis || null, loading: false };
   noteModal = null;
+  annotationModal = null;
   moveModal = null;
   render();
 }
@@ -680,12 +740,14 @@ async function handleAction(action, element) {
       case 'batch-delete': {
         const selectedIds = [...selectedSet(projectId)];
         if (!selectedIds.length) return;
+        const project = getProject(projectId);
+        const markCount = selectedIds.reduce((total, id) => total + liveAnnotations(project?.tabs?.find((tab) => tab.id === id)).length, 0);
         confirmModal = {
           kind: 'tabs',
           projectId,
           tabIds: selectedIds,
           title: `删除 ${selectedIds.length} 个标签页？`,
-          message: '这些条目将从项目中移除，但不会影响浏览器标签页或收藏夹。'
+          message: `这些条目将从项目中移除${markCount ? `，其上的 ${markCount} 处页面标记与笔记也会一并删除` : ''}，但不会影响浏览器标签页或收藏夹。`
         };
         render();
         break;
@@ -693,13 +755,14 @@ async function handleAction(action, element) {
       case 'delete-tab': {
         const tab = getTab(projectId, tabId);
         if (!tab) throw new Error('找不到标签页');
+        const marks = liveAnnotations(tab).length;
         confirmModal = {
           kind: 'tabs',
           projectId,
           tabIds: [tabId],
           keepManaging: true,
           title: `删除“${tab.title || '未命名页面'}”？`,
-          message: '这个条目将从项目中移除，但不会影响浏览器标签页或收藏夹。'
+          message: `这个条目将从项目中移除${marks ? `，其上的 ${marks} 处页面标记与笔记也会一并删除` : ''}，但不会影响浏览器标签页或收藏夹。`
         };
         render();
         break;
@@ -746,6 +809,62 @@ async function handleAction(action, element) {
       case 'open-note':
         openNote(projectId, tabId);
         break;
+      case 'open-annotations': {
+        const tab = getTab(projectId, tabId);
+        if (!tab) throw new Error('找不到标签页');
+        annotationModal = { projectId, tabId, editingId: null };
+        noteModal = null;
+        projectNoteModal = null;
+        moveModal = null;
+        render();
+        break;
+      }
+      case 'close-annotations':
+        annotationModal = null;
+        await refresh();
+        break;
+      case 'edit-annotation':
+        annotationModal.editingId = element.dataset.annotationId;
+        render();
+        requestAnimationFrame(() => {
+          const editor = document.querySelector('[data-role="annotation-editor"]');
+          if (editor) {
+            editor.focus();
+            editor.setSelectionRange(editor.value.length, editor.value.length);
+          }
+        });
+        break;
+      case 'cancel-annotation-edit':
+        annotationModal.editingId = null;
+        render();
+        break;
+      case 'save-annotation-comment': {
+        const tab = getTab(annotationModal.projectId, annotationModal.tabId);
+        const item = tab?.annotations?.find((entry) => entry.id === element.dataset.annotationId);
+        if (!item) throw new Error('找不到标记');
+        item.comment = document.querySelector('[data-role="annotation-editor"]')?.value.trim() || '';
+        item.updatedAt = new Date().toISOString();
+        await apiCall('SAVE_ANNOTATION', { projectId: annotationModal.projectId, tabId: annotationModal.tabId, url: tab.url, annotation: item });
+        annotationModal.editingId = null;
+        await refresh();
+        showToast('评论已保存');
+        break;
+      }
+      case 'delete-annotation': {
+        const tab = getTab(annotationModal.projectId, annotationModal.tabId);
+        if (!tab) throw new Error('找不到标签页');
+        await apiCall('DELETE_ANNOTATION', { projectId: annotationModal.projectId, tabId: annotationModal.tabId, url: tab.url, annotationId: element.dataset.annotationId });
+        await refresh();
+        showToast('标记已删除');
+        break;
+      }
+      case 'focus-annotation': {
+        const tab = getTab(annotationModal.projectId, annotationModal.tabId);
+        if (!tab) throw new Error('找不到标签页');
+        await apiCall('OPEN_SAVED_TAB', { projectId: annotationModal.projectId, tabId: annotationModal.tabId, focusAnnotationId: element.dataset.annotationId });
+        showToast('已打开页面并定位标记');
+        break;
+      }
       case 'open-project-note':
         openProjectNote(projectId);
         break;
@@ -873,9 +992,10 @@ app.addEventListener('input', (event) => {
 });
 
 app.addEventListener('keydown', (event) => {
-  if (confirmModal && event.key === 'Escape') {
+  if ((confirmModal || annotationModal) && event.key === 'Escape') {
     event.preventDefault();
     confirmModal = null;
+    annotationModal = null;
     render();
     return;
   }
@@ -920,7 +1040,7 @@ app.addEventListener('change', async (event) => {
 });
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
-  if (areaName === 'local' && changes.projectTabState?.newValue && !noteModal && !projectNoteModal && !moveModal && !projectEditor && !confirmModal) {
+  if (areaName === 'local' && changes.projectTabState?.newValue && !noteModal && !projectNoteModal && !moveModal && !projectEditor && !confirmModal && !annotationModal) {
     refresh();
   }
 });

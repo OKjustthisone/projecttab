@@ -1,5 +1,8 @@
 export const STORAGE_KEY = 'projectTabState';
 export const SYNC_KEY = 'projectTabSyncState';
+export const PENDING_FOCUS_KEY = 'projectTabPendingFocus';
+
+export const HIGHLIGHT_COLORS = ['yellow', 'green', 'blue', 'pink', 'purple', 'orange'];
 
 export const DEFAULT_SETTINGS = {
   sidebarMode: 'edge',
@@ -32,7 +35,7 @@ export function createId(prefix = 'id') {
 export function createEmptyState() {
   const now = new Date().toISOString();
   return {
-    version: 4,
+    version: STATE_VERSION,
     updatedAt: now,
     deletions: [],
     projects: [
@@ -114,6 +117,45 @@ function normalizeNote(note) {
   };
 }
 
+export function normalizeAnnotation(entry) {
+  const source = entry && typeof entry === 'object' ? entry : {};
+  const quote = source.quote && typeof source.quote === 'object' ? source.quote : {};
+  const start = Number(source.start);
+  const end = Number(source.end);
+  return {
+    id: asString(source.id, createId('anno')),
+    color: HIGHLIGHT_COLORS.includes(source.color) ? source.color : HIGHLIGHT_COLORS[0],
+    quote: {
+      exact: asString(quote.exact),
+      prefix: asString(quote.prefix),
+      suffix: asString(quote.suffix)
+    },
+    start: Number.isFinite(start) && start >= 0 ? Math.round(start) : 0,
+    end: Number.isFinite(end) && end >= 0 ? Math.round(end) : 0,
+    cssPath: asString(source.cssPath),
+    comment: asString(source.comment),
+    createdAt: asString(source.createdAt, new Date().toISOString()),
+    updatedAt: source.updatedAt ? asString(source.updatedAt) : asString(source.createdAt, new Date().toISOString()),
+    deletedAt: source.deletedAt ? asString(source.deletedAt) : null
+  };
+}
+
+function normalizeAnnotations(value) {
+  if (!Array.isArray(value)) return [];
+  const now = Date.now();
+  const entries = new Map();
+  for (const entry of value) {
+    if (!entry || typeof entry !== 'object') continue;
+    const normalized = normalizeAnnotation(entry);
+    if (!normalized.quote.exact) continue;
+    // 软删除墓碑超过 TTL 后彻底清理，避免数组无限膨胀。
+    if (normalized.deletedAt && now - (Date.parse(normalized.deletedAt) || 0) > TOMBSTONE_TTL_MS) continue;
+    const previous = entries.get(normalized.id);
+    if (!previous || previous.updatedAt < normalized.updatedAt) entries.set(normalized.id, normalized);
+  }
+  return [...entries.values()].sort((a, b) => timeOf(a.createdAt) - timeOf(b.createdAt));
+}
+
 function normalizeTab(tab) {
   const source = tab && typeof tab === 'object' ? tab : {};
   return {
@@ -127,7 +169,8 @@ function normalizeTab(tab) {
     updatedAt: source.updatedAt ? asString(source.updatedAt) : asString(source.addedAt, new Date().toISOString()),
     lastOpenedAt: source.lastOpenedAt ? asString(source.lastOpenedAt) : null,
     starred: asBoolean(source.starred),
-    note: normalizeNote(source.note)
+    note: normalizeNote(source.note),
+    annotations: normalizeAnnotations(source.annotations)
   };
 }
 
@@ -153,7 +196,7 @@ function normalizeProject(project) {
   };
 }
 
-export const STATE_VERSION = 4;
+export const STATE_VERSION = 5;
 export const TOMBSTONE_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 export const TOMBSTONE_LIMIT = 500;
 
@@ -217,6 +260,24 @@ function mergeOrder(localIds, remoteIds) {
   return order;
 }
 
+// 标记按 id 取并集，同 id 以 updatedAt 较新方为准；单条软删除（deletedAt）
+// 同样跟随较新方，从而让“删除标记”能跨设备传播而不被旧副本复活。
+function mergeAnnotations(localValue, remoteValue) {
+  const local = Array.isArray(localValue) ? localValue : [];
+  const remote = Array.isArray(remoteValue) ? remoteValue : [];
+  const merged = new Map();
+  for (const entry of [...local, ...remote]) {
+    if (!entry || typeof entry !== 'object' || !entry.id) continue;
+    const previous = merged.get(entry.id);
+    if (!previous) {
+      merged.set(entry.id, entry);
+      continue;
+    }
+    merged.set(entry.id, timeOf(entry.updatedAt) >= timeOf(previous.updatedAt) ? entry : previous);
+  }
+  return [...merged.values()].sort((a, b) => timeOf(a.createdAt) - timeOf(b.createdAt));
+}
+
 function mergeTabPair(local, remote) {
   if (!local) {
     const adopted = { ...remote, browserTabId: null };
@@ -227,6 +288,7 @@ function mergeTabPair(local, remote) {
   const merged = { ...winner };
   merged.browserTabId = local.browserTabId ?? null;
   merged.note = pickNewer(local.note, remote.note, (note) => note?.updatedAt) || { blocks: [], updatedAt: null };
+  merged.annotations = mergeAnnotations(local.annotations, remote.annotations);
   return merged;
 }
 
@@ -414,7 +476,8 @@ export function normalizeTabInput(tab) {
     updatedAt: now,
     lastOpenedAt: null,
     starred: false,
-    note: { blocks: [], updatedAt: null }
+    note: { blocks: [], updatedAt: null },
+    annotations: []
   };
 }
 
@@ -431,6 +494,7 @@ export function icon(name, size = 16) {
     search: '<circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 4 4"/>',
     star: '<path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9L12 3Z"/>',
     note: '<path d="M5 3.5h9.5L18 7v13.5H5V3.5Z"/><path d="M14.5 3.5V7H18M8 11h7M8 14.5h7M8 18h4"/>',
+    highlight: '<path d="m14.5 4 5.5 5.5-8 8H6.5v-5.5l8-8Z"/><path d="M4 21h16"/>',
     spark: '<path d="m12 3 1.2 5.2L18 10l-4.8 1.8L12 17l-1.2-5.2L6 10l4.8-1.8L12 3ZM19 15l.6 2.4L22 18l-2.4.6L19 21l-.6-2.4L16 18l2.4-.6L19 15Z"/>',
     trash: '<path d="M4 7h16M10 11v5M14 11v5M6.5 7l.7 12.5h9.6L17.5 7M9 7V4.5h6V7"/>',
     copy: '<rect x="8" y="8" width="10" height="11" rx="1.5"/><path d="M6 15H5a1.5 1.5 0 0 1-1.5-1.5V5A1.5 1.5 0 0 1 5 3.5h8A1.5 1.5 0 0 1 14.5 5v1"/>',

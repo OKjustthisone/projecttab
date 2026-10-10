@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Project Tab browser extension",
   "scripts": {
-    "check": "node --check background.js && node --check content.js && node --check shared.js && node --check sidepanel.js && node --check popup.js && node --check options.js",
+    "check": "node --check background.js && node --check content.js && node --check annotator.js && node --check shared.js && node --check sidepanel.js && node --check popup.js && node --check options.js",
     "build": "npm run check"
   }
 }

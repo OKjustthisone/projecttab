@@ -42,7 +42,8 @@
   "content_scripts": [
     {
       "matches": ["http://*/*", "https://*/*"],
-      "js": ["content.js"],
+      "js": ["content.js", "annotator.js"],
+      "css": ["annotator.css"],
       "run_at": "document_idle",
       "all_frames": false
     }

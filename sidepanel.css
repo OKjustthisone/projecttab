@@ -15,6 +15,12 @@
   --surface-2: #f7fbf8;
   --danger: #d85858;
   --shadow: 0 18px 48px rgba(31, 87, 59, .13);
+  --anno-yellow: #ffd60a;
+  --anno-green: #30d158;
+  --anno-blue: #0a84ff;
+  --anno-pink: #ff375f;
+  --anno-purple: #bf5af2;
+  --anno-orange: #ff9f0a;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
   font-size: 13px;
 }
@@ -194,6 +200,21 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .relationship strong { display: block; color: var(--ink); }
 .relationship span { color: var(--muted); }
 .analysis-note { margin-top: 14px; color: var(--muted); font-size: 10px; }
+
+.annotation-list { display: flex; flex-direction: column; gap: 8px; max-height: 340px; overflow: auto; }
+.annotation-item { padding: 9px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); }
+.annotation-head { display: flex; align-items: center; gap: 7px; }
+.annotation-dot { width: 11px; height: 11px; flex: 0 0 11px; border-radius: 50%; background: var(--dot, #ffd60a); box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .12); }
+.annotation-quote { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; font-weight: 600; }
+.annotation-icon { width: 22px; height: 22px; flex: 0 0 22px; }
+.annotation-icon .pt-icon { width: 13px; height: 13px; }
+.annotation-comment { position: relative; margin-top: 6px; padding: 6px 26px 6px 8px; border-radius: 7px; background: var(--surface); color: var(--ink); font-size: 11px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+.annotation-comment[data-empty="true"] { color: var(--muted-2); font-style: italic; }
+.annotation-edit { position: absolute; right: 3px; top: 3px; }
+.annotation-editor { width: 100%; min-height: 58px; margin-top: 6px; padding: 7px 8px; border: 1px solid var(--green-500); border-radius: 8px; background: var(--surface); color: var(--ink); outline: 0; font-size: 11px; line-height: 1.5; resize: vertical; }
+.annotation-edit-actions { display: flex; gap: 6px; margin-top: 7px; }
+.annotation-edit-actions .grow { flex: 1; }
+.annotation-meta { margin-top: 5px; color: var(--muted-2); font-size: 9px; }
 
 @media (prefers-color-scheme: dark) {
   :root { color-scheme: dark; --ink: #e4f3e9; --muted: #9bb8a7; --muted-2: #718d7d; --line: #29493a; --surface: #14251c; --surface-2: #102019; --green-050: #173125; --green-100: #1b4432; --green-900: #d7f6e2; --shadow: 0 18px 48px rgba(0, 0, 0, .3); }

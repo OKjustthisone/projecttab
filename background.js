@@ -1,6 +1,7 @@
 import {
   STORAGE_KEY,
   SYNC_KEY,
+  PENDING_FOCUS_KEY,
   clone,
   createId,
   createDeletion,
@@ -8,6 +9,7 @@ import {
   isWebUrl,
   localProjectAnalysis,
   mergeStates,
+  normalizeAnnotation,
   normalizeState,
   normalizeTabInput
 } from './shared.js';
@@ -200,6 +202,55 @@ function tabById(project, tabId) {
   return project?.tabs.find((tab) => tab.id === tabId);
 }
 
+// 按 URL 定位已收藏条目：优先用浏览器标签句柄（同一 URL 可能收藏在多个项目），
+// 其次取最近更新的匹配项，保证多项目同 URL 时结果稳定。
+function findSavedTab(state, url, browserTabId = null) {
+  const target = String(url || '');
+  if (!target) return null;
+  const matches = [];
+  for (const project of state.projects) {
+    for (const tab of project.tabs) {
+      if (tab.url === target) matches.push({ project, tab });
+    }
+  }
+  if (!matches.length) return null;
+  if (browserTabId != null) {
+    const byHandle = matches.find((entry) => entry.tab.browserTabId === browserTabId);
+    if (byHandle) return byHandle;
+  }
+  return matches.sort((a, b) => (a.tab.updatedAt < b.tab.updatedAt ? 1 : -1))[0];
+}
+
+function touchTab(project, tab) {
+  const now = new Date().toISOString();
+  tab.updatedAt = now;
+  project.updatedAt = now;
+}
+
+async function readPendingFocus(url) {
+  try {
+    const stored = await chrome.storage.session?.get(PENDING_FOCUS_KEY);
+    const pending = stored?.[PENDING_FOCUS_KEY];
+    if (!pending || pending.url !== url) return null;
+    await chrome.storage.session?.remove(PENDING_FOCUS_KEY);
+    if (Date.now() - (Number(pending.ts) || 0) > 5 * 60 * 1000) return null;
+    return pending.annotationId || null;
+  } catch {
+    return null;
+  }
+}
+
+// 面板调用时带 projectId/tabId（精确）；内容脚本调用时只有 URL，按浏览器标签句柄优先匹配。
+function resolveAnnotationTarget(state, message, sender) {
+  if (message.projectId && message.tabId) {
+    const project = projectById(state, message.projectId);
+    const tab = tabById(project, message.tabId);
+    return tab ? { project, tab } : null;
+  }
+  const senderTabId = Number.isInteger(sender?.tab?.id) ? sender.tab.id : null;
+  return findSavedTab(state, message.url, senderTabId);
+}
+
 function makeTabRecord(input) {
   const record = normalizeTabInput(input);
   if (!record.domain) record.domain = domainFromUrl(record.url);
@@ -227,7 +278,7 @@ async function getActiveTab() {
   return tab || null;
 }
 
-async function openSavedTab(projectId, tabId) {
+async function openSavedTab(projectId, tabId, message = {}) {
   const state = await loadState();
   const project = projectById(state, projectId);
   const saved = tabById(project, tabId);
@@ -247,6 +298,19 @@ async function openSavedTab(projectId, tabId) {
   saved.browserTabId = opened?.id ?? saved.browserTabId;
   saved.lastOpenedAt = new Date().toISOString();
   saved.updatedAt = saved.lastOpenedAt;
+  if (message.focusAnnotationId && chrome.storage.session) {
+    // 内容脚本加载后读取该标记并滚动定位；存 session 而不是 state，避免同步到其他设备。
+    await chrome.storage.session.set({
+      [PENDING_FOCUS_KEY]: { url: saved.url, annotationId: String(message.focusAnnotationId), ts: Date.now() }
+    }).catch(() => {});
+    // 页面已打开时内容脚本已在运行，直接消息通知它重新拉取并定位。
+    if (opened?.id != null) {
+      await chrome.tabs.sendMessage(opened.id, {
+        type: 'PT_FOCUS_ANNOTATION',
+        annotationId: String(message.focusAnnotationId)
+      }).catch(() => {});
+    }
+  }
   await saveState(state);
   return { tab: saved };
 }
@@ -666,7 +730,10 @@ async function handleMessage(message, sender) {
       const state = await loadState();
       const project = projectById(state, message.projectId);
       if (!project) throw new Error('找不到项目');
-      const result = addRecord(project, message.tab || {});
+      const payload = { ...(message.tab || {}) };
+      // 内容脚本收藏当前页时没有浏览器标签句柄，从 sender 补齐，便于标记按句柄精确归属。
+      if (!Number.isInteger(payload.id) && Number.isInteger(sender?.tab?.id)) payload.id = sender.tab.id;
+      const result = addRecord(project, payload);
       const next = await saveState(state);
       return { state: next, added: result.added, tab: result.tab };
     }
@@ -691,7 +758,7 @@ async function handleMessage(message, sender) {
       return items.filter((item) => isWebUrl(item.url));
     }
     case 'OPEN_SAVED_TAB':
-      return openSavedTab(message.projectId, message.tabId);
+      return openSavedTab(message.projectId, message.tabId, message);
     case 'TOGGLE_STAR': {
       const state = await loadState();
       const project = projectById(state, message.projectId);
@@ -712,6 +779,50 @@ async function handleMessage(message, sender) {
       tab.updatedAt = tab.note.updatedAt;
       project.updatedAt = new Date().toISOString();
       return saveState(state);
+    }
+    case 'GET_ANNOTATIONS': {
+      const state = await loadState();
+      const match = resolveAnnotationTarget(state, message, sender);
+      if (!match) return { saved: false, annotations: [] };
+      return {
+        saved: true,
+        projectId: match.project.id,
+        tabId: match.tab.id,
+        annotations: match.tab.annotations || [],
+        pendingFocusId: await readPendingFocus(match.tab.url)
+      };
+    }
+    case 'SAVE_ANNOTATION': {
+      const state = await loadState();
+      const match = resolveAnnotationTarget(state, message, sender);
+      if (!match) throw new Error('请先收藏这个页面再添加标记');
+      const incoming = normalizeAnnotation(message.annotation);
+      const list = Array.isArray(match.tab.annotations) ? match.tab.annotations : [];
+      const index = list.findIndex((item) => item.id === incoming.id);
+      if (index >= 0) list[index] = incoming;
+      else list.push(incoming);
+      match.tab.annotations = list;
+      touchTab(match.project, match.tab);
+      return {
+        projectId: match.project.id,
+        tabId: match.tab.id,
+        annotations: match.tab.annotations
+      };
+    }
+    case 'DELETE_ANNOTATION': {
+      const state = await loadState();
+      const match = resolveAnnotationTarget(state, message, sender);
+      if (!match) throw new Error('找不到这个页面的标记');
+      const now = new Date().toISOString();
+      match.tab.annotations = (match.tab.annotations || []).map((item) =>
+        item.id === message.annotationId ? { ...item, deletedAt: now, updatedAt: now } : item
+      );
+      touchTab(match.project, match.tab);
+      return {
+        projectId: match.project.id,
+        tabId: match.tab.id,
+        annotations: match.tab.annotations
+      };
     }
     case 'SAVE_PROJECT_NOTE': {
       const state = await loadState();

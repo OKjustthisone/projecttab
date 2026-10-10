@@ -1,0 +1,8 @@
+/* 页面内高亮渲染：CSS Custom Highlight API 不修改页面 DOM，样式需随清单注入以绕过页面 CSP。 */
+::highlight(pt-yellow) { background-color: rgba(255, 214, 10, .45); color: CanvasText; }
+::highlight(pt-green) { background-color: rgba(84, 224, 138, .4); color: CanvasText; }
+::highlight(pt-blue) { background-color: rgba(88, 166, 255, .4); color: CanvasText; }
+::highlight(pt-pink) { background-color: rgba(255, 105, 180, .38); color: CanvasText; }
+::highlight(pt-purple) { background-color: rgba(179, 136, 255, .42); color: CanvasText; }
+::highlight(pt-orange) { background-color: rgba(255, 149, 0, .42); color: CanvasText; }
+::highlight(pt-flash) { background-color: rgba(255, 87, 34, .8); color: #fff; }
