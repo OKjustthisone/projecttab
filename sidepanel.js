@@ -4,6 +4,7 @@ import {
   escapeHtml,
   formatDate,
   icon,
+  isExtensionContextAlive,
   truncate
 } from './shared.js';
 
@@ -85,6 +86,16 @@ function showToast(message, error = false) {
   toastTimer = setTimeout(() => toast.classList.remove('is-visible'), 2600);
 }
 
+let contextRecoveryScheduled = false;
+
+function recoverFromInvalidContext() {
+  if (contextRecoveryScheduled) return;
+  contextRecoveryScheduled = true;
+  clearTimeout(toastTimer);
+  showToast('扩展已更新，面板即将自动重载…');
+  setTimeout(() => window.location.reload(), 1200);
+}
+
 function projectMatches(project) {
   const query = searchQuery.trim().toLowerCase();
   if (!query) return true;
@@ -144,7 +155,7 @@ function renderTopbar() {
       <div class="brand-mark"><img src="logo.png" alt="Project Tab"></div>
       <div class="brand-copy"><strong>Project Tab</strong><small>独立管理你的网页工作区</small></div>
       <div class="top-actions">
-        <button class="icon-button top-action-button" data-action="sync" aria-label="手动刷新并同步" title="手动刷新并同步">${icon('refresh', 15)}</button>
+        <button class="icon-button top-action-button" data-action="sync" aria-label="手动双向同步" title="手动双向同步">${icon('refresh', 15)}</button>
         <button class="icon-button top-action-button" data-action="open-settings" aria-label="设置" title="设置">${icon('settings', 15)}</button>
         <button class="icon-button top-action-button" data-action="create-project" aria-label="创建项目文件夹" title="创建项目文件夹">${icon('folder-plus', 15)}</button>
         ${edgePanelActions}
@@ -417,6 +428,10 @@ async function refresh() {
     state = await apiCall('GET_STATE');
     render();
   } catch (error) {
+    if (!isExtensionContextAlive()) {
+      recoverFromInvalidContext();
+      return;
+    }
     showToast(error.message, true);
   }
 }
@@ -542,6 +557,10 @@ async function handleAction(action, element) {
   const projectId = element.dataset.projectId;
   const tabId = element.dataset.tabId;
   if (action !== 'toggle-project-menu') projectMenuId = null;
+  if (!isExtensionContextAlive()) {
+    recoverFromInvalidContext();
+    return;
+  }
   try {
     switch (action) {
       case 'create-project':
@@ -552,8 +571,8 @@ async function handleAction(action, element) {
         break;
       case 'sync':
         showToast('正在同步…');
-        await apiCall('SYNC', { direction: 'upload' });
-        showToast('已完成手动同步');
+        await apiCall('SYNC', { direction: 'both' });
+        showToast('已完成双向同步');
         break;
       case 'open-settings':
         await chrome.runtime.openOptionsPage();
@@ -801,6 +820,10 @@ async function handleAction(action, element) {
         break;
     }
   } catch (error) {
+    if (!isExtensionContextAlive()) {
+      recoverFromInvalidContext();
+      return;
+    }
     showToast(error.message, true);
   }
 }

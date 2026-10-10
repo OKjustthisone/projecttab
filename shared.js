@@ -11,6 +11,7 @@ export const DEFAULT_SETTINGS = {
   autoSync: false,
   autoSyncIntervalHours: 6,
   syncProvider: 'browser',
+  updatedAt: null,
   webdav: {
     url: '',
     username: '',
@@ -31,8 +32,9 @@ export function createId(prefix = 'id') {
 export function createEmptyState() {
   const now = new Date().toISOString();
   return {
-    version: 3,
+    version: 4,
     updatedAt: now,
+    deletions: [],
     projects: [
       {
         id: createId('project'),
@@ -122,6 +124,7 @@ function normalizeTab(tab) {
     domain: asString(source.domain),
     browserTabId: Number.isInteger(source.browserTabId) ? source.browserTabId : null,
     addedAt: asString(source.addedAt, new Date().toISOString()),
+    updatedAt: source.updatedAt ? asString(source.updatedAt) : asString(source.addedAt, new Date().toISOString()),
     lastOpenedAt: source.lastOpenedAt ? asString(source.lastOpenedAt) : null,
     starred: asBoolean(source.starred),
     note: normalizeNote(source.note)
@@ -148,6 +151,182 @@ function normalizeProject(project) {
         : null
     }
   };
+}
+
+export const STATE_VERSION = 4;
+export const TOMBSTONE_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+export const TOMBSTONE_LIMIT = 500;
+
+function normalizeDeletions(value) {
+  if (!Array.isArray(value)) return [];
+  const now = Date.now();
+  const entries = new Map();
+  for (const entry of value) {
+    if (!entry || typeof entry !== 'object') continue;
+    const kind = entry.kind === 'project' || entry.kind === 'tab' ? entry.kind : null;
+    const id = typeof entry.id === 'string' ? entry.id : '';
+    if (!kind || !id) continue;
+    const projectId = kind === 'tab' && typeof entry.projectId === 'string' ? entry.projectId : null;
+    if (kind === 'tab' && !projectId) continue;
+    const deletedAt = typeof entry.deletedAt === 'string' ? entry.deletedAt : new Date().toISOString();
+    const key = `${kind}:${projectId || ''}:${id}`;
+    const previous = entries.get(key);
+    if (!previous || previous.deletedAt < deletedAt) {
+      entries.set(key, { kind, id, projectId, deletedAt });
+    }
+  }
+  return [...entries.values()]
+    .filter((entry) => now - (Date.parse(entry.deletedAt) || 0) <= TOMBSTONE_TTL_MS)
+    .sort((a, b) => (a.deletedAt < b.deletedAt ? 1 : a.deletedAt > b.deletedAt ? -1 : 0))
+    .slice(0, TOMBSTONE_LIMIT);
+}
+
+export function createDeletion(kind, id, projectId = null) {
+  return {
+    kind,
+    id,
+    projectId: kind === 'tab' ? projectId : null,
+    deletedAt: new Date().toISOString()
+  };
+}
+
+function timeOf(value) {
+  const time = Date.parse(value || '');
+  return Number.isFinite(time) ? time : 0;
+}
+
+function pickNewer(local, remote, timeAccessor) {
+  if (!local) return remote;
+  if (!remote) return local;
+  return timeOf(timeAccessor(remote)) >= timeOf(timeAccessor(local)) ? remote : local;
+}
+
+function mergeOrder(localIds, remoteIds) {
+  const remoteSet = new Set(remoteIds);
+  const seen = new Set();
+  const order = [];
+  for (const id of remoteIds) {
+    order.push(id);
+    seen.add(id);
+  }
+  localIds.forEach((id, index) => {
+    if (remoteSet.has(id) || seen.has(id)) return;
+    seen.add(id);
+    order.splice(Math.min(index, order.length), 0, id);
+  });
+  return order;
+}
+
+function mergeTabPair(local, remote) {
+  if (!local) {
+    const adopted = { ...remote, browserTabId: null };
+    return adopted;
+  }
+  if (!remote) return local;
+  const winner = pickNewer(local, remote, (tab) => tab.updatedAt);
+  const merged = { ...winner };
+  merged.browserTabId = local.browserTabId ?? null;
+  merged.note = pickNewer(local.note, remote.note, (note) => note?.updatedAt) || { blocks: [], updatedAt: null };
+  return merged;
+}
+
+function tabDeletionMap(deletions, projectId) {
+  const map = new Map();
+  for (const entry of deletions) {
+    if (entry.kind !== 'tab' || entry.projectId !== projectId) continue;
+    const time = timeOf(entry.deletedAt);
+    if (!map.has(entry.id) || time > map.get(entry.id)) map.set(entry.id, time);
+  }
+  return map;
+}
+
+function mergeTabs(localTabs, remoteTabs, deletions, projectId) {
+  const localMap = new Map(localTabs.map((tab) => [tab.id, tab]));
+  const remoteMap = new Map(remoteTabs.map((tab) => [tab.id, tab]));
+  const tombstones = tabDeletionMap(deletions, projectId);
+  const merged = [];
+  for (const id of mergeOrder(localTabs.map((tab) => tab.id), remoteTabs.map((tab) => tab.id))) {
+    const local = localMap.get(id);
+    const remote = remoteMap.get(id);
+    if (!local && !remote) continue;
+    const tombstone = tombstones.get(id) || 0;
+    if (tombstone && tombstone >= Math.max(timeOf(local?.updatedAt), timeOf(remote?.updatedAt))) continue;
+    merged.push(mergeTabPair(local, remote));
+  }
+  return merged;
+}
+
+function mergeProjectPair(local, remote, deletions) {
+  const winner = pickNewer(local, remote, (project) => project.updatedAt);
+  const merged = { ...winner };
+  merged.tabs = mergeTabs(local?.tabs || [], remote?.tabs || [], deletions, winner.id);
+  return merged;
+}
+
+function mergeSettings(local, remote) {
+  return pickNewer(local, remote, (settings) => settings?.updatedAt);
+}
+
+function isUntouchedShell(value) {
+  const source = value && typeof value === 'object' ? value : {};
+  const projects = Array.isArray(source.projects) ? source.projects : [];
+  if (projects.length !== 1) return false;
+  const project = projects[0];
+  if (!project) return false;
+  if (Array.isArray(project.tabs) && project.tabs.length > 0) return false;
+  if (Array.isArray(source.deletions) && source.deletions.length > 0) return false;
+  // 从未被修改过的新设备默认项目（创建后没有发生任何编辑）
+  return Boolean(project.createdAt) && project.createdAt === project.updatedAt;
+}
+
+/**
+ * 条目级双向合并：项目/标签页按 updatedAt 取较新一方，远端并列时以远端为准，
+ * 删除墓碑防止已删条目复活，标签页顺序以远端为基准以保证两台设备收敛。
+ */
+export function mergeStates(localValue, remoteValue) {
+  const local = normalizeState(localValue);
+  const remote = normalizeState(remoteValue);
+  const deletions = normalizeDeletions([...(local.deletions || []), ...(remote.deletions || [])]);
+
+  // 空 projects 表示“没有任何项目”，不应被 normalizeState 的默认项目污染合并结果；
+  // 新设备的未修改默认项目同样跳过，避免把空文件夹推给另一台设备。
+  const localVirgin = isUntouchedShell(localValue);
+  const remoteVirgin = isUntouchedShell(remoteValue);
+  const localProjects = (!localVirgin || remoteVirgin) && Array.isArray(localValue?.projects) && localValue.projects.length
+    ? local.projects
+    : [];
+  const remoteProjects = (!remoteVirgin || localVirgin) && Array.isArray(remoteValue?.projects) && remoteValue.projects.length
+    ? remote.projects
+    : [];
+
+  const projectTombstones = new Map();
+  for (const entry of deletions) {
+    if (entry.kind !== 'project') continue;
+    const time = timeOf(entry.deletedAt);
+    if (!projectTombstones.has(entry.id) || time > projectTombstones.get(entry.id)) {
+      projectTombstones.set(entry.id, time);
+    }
+  }
+
+  const localProjectMap = new Map(localProjects.map((project) => [project.id, project]));
+  const remoteProjectMap = new Map(remoteProjects.map((project) => [project.id, project]));
+  const projects = [];
+  for (const id of mergeOrder(localProjects.map((project) => project.id), remoteProjects.map((project) => project.id))) {
+    const localProject = localProjectMap.get(id);
+    const remoteProject = remoteProjectMap.get(id);
+    if (!localProject && !remoteProject) continue;
+    const tombstone = projectTombstones.get(id) || 0;
+    if (tombstone && tombstone >= Math.max(timeOf(localProject?.updatedAt), timeOf(remoteProject?.updatedAt))) continue;
+    projects.push(mergeProjectPair(localProject, remoteProject, deletions));
+  }
+
+  return normalizeState({
+    version: STATE_VERSION,
+    updatedAt: timeOf(local.updatedAt) >= timeOf(remote.updatedAt) ? local.updatedAt : remote.updatedAt,
+    deletions,
+    projects,
+    settings: mergeSettings(local.settings, remote.settings)
+  });
 }
 
 export function normalizeState(value) {
@@ -180,8 +359,9 @@ export function normalizeState(value) {
   }
 
   return {
-    version: 3,
+    version: STATE_VERSION,
     updatedAt: asString(source.updatedAt, fallback.updatedAt),
+    deletions: normalizeDeletions(source.deletions),
     projects: projects.length ? projects : fallback.projects,
     settings: {
       ...DEFAULT_SETTINGS,
@@ -192,6 +372,7 @@ export function normalizeState(value) {
       autoSync: asBoolean(settings.autoSync),
       autoSyncIntervalHours: Math.min(168, Math.max(1, Number(settings.autoSyncIntervalHours) || DEFAULT_SETTINGS.autoSyncIntervalHours)),
       syncProvider: ['browser', 'webdav'].includes(settings.syncProvider) ? settings.syncProvider : 'browser',
+      updatedAt: settings.updatedAt ? asString(settings.updatedAt) : null,
       webdav: {
         ...DEFAULT_SETTINGS.webdav,
         ...webdav
@@ -221,6 +402,7 @@ export function isWebUrl(url) {
 }
 
 export function normalizeTabInput(tab) {
+  const now = new Date().toISOString();
   return {
     id: createId('tab'),
     url: asString(tab?.url),
@@ -228,7 +410,8 @@ export function normalizeTabInput(tab) {
     favicon: asString(tab?.favIconUrl || tab?.favicon),
     domain: domainFromUrl(tab?.url),
     browserTabId: Number.isInteger(tab?.id) ? tab.id : null,
-    addedAt: new Date().toISOString(),
+    addedAt: now,
+    updatedAt: now,
     lastOpenedAt: null,
     starred: false,
     note: { blocks: [], updatedAt: null }
@@ -373,23 +556,45 @@ export function localProjectAnalysis(project) {
   };
 }
 
+export const CONTEXT_INVALIDATED_MESSAGE = '扩展已重新加载：请刷新页面或重新打开面板后重试';
+
+export function isExtensionContextAlive() {
+  try {
+    return typeof chrome !== 'undefined' && Boolean(chrome.runtime && chrome.runtime.id);
+  } catch {
+    return false;
+  }
+}
+
 export function apiCall(type, payload = {}) {
   return new Promise((resolve, reject) => {
-    chrome.runtime.sendMessage({ type, ...payload }, (response) => {
-      const runtimeError = chrome.runtime.lastError;
-      if (runtimeError) {
-        reject(new Error(runtimeError.message));
-        return;
-      }
-      if (!response) {
-        reject(new Error('扩展后台未响应'));
-        return;
-      }
-      if (!response.ok) {
-        reject(new Error(response.error || '操作失败'));
-        return;
-      }
-      resolve(response.data);
-    });
+    if (!isExtensionContextAlive()) {
+      reject(new Error(CONTEXT_INVALIDATED_MESSAGE));
+      return;
+    }
+    try {
+      chrome.runtime.sendMessage({ type, ...payload }, (response) => {
+        try {
+          const runtimeError = chrome.runtime.lastError;
+          if (runtimeError) {
+            reject(new Error(runtimeError.message));
+            return;
+          }
+          if (!response) {
+            reject(new Error('扩展后台未响应'));
+            return;
+          }
+          if (!response.ok) {
+            reject(new Error(response.error || '操作失败'));
+            return;
+          }
+          resolve(response.data);
+        } catch {
+          reject(new Error(CONTEXT_INVALIDATED_MESSAGE));
+        }
+      });
+    } catch {
+      reject(new Error(CONTEXT_INVALIDATED_MESSAGE));
+    }
   });
 }

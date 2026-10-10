@@ -1,4 +1,4 @@
-import { apiCall, escapeHtml, icon } from './shared.js';
+import { apiCall, CONTEXT_INVALIDATED_MESSAGE, escapeHtml, icon, isExtensionContextAlive } from './shared.js';
 
 const app = document.querySelector('#popup-app');
 let state = null;
@@ -72,7 +72,7 @@ app.addEventListener('click', async (event) => {
       window.close();
     }
   } catch (error) {
-    toast(error.message, true);
+    toast(isExtensionContextAlive() ? error.message : CONTEXT_INVALIDATED_MESSAGE, true);
   }
 });
 

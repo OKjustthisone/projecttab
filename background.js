@@ -3,14 +3,17 @@ import {
   SYNC_KEY,
   clone,
   createId,
+  createDeletion,
   domainFromUrl,
   isWebUrl,
   localProjectAnalysis,
+  mergeStates,
   normalizeState,
   normalizeTabInput
 } from './shared.js';
 
 const ALARM_NAME = 'project-tab-auto-sync';
+const AUTO_SYNC_DEBOUNCE_MS = 10000;
 const WEBDAV_DEFAULT_FILENAME = 'project-tab.json';
 const JIANGUOYUN_WEBDAV_HOST = 'dav.jianguoyun.com';
 
@@ -210,6 +213,7 @@ function addRecord(project, input) {
     if (Number.isInteger(input.id)) duplicate.browserTabId = input.id;
     if (input.title) duplicate.title = input.title;
     if (input.favIconUrl) duplicate.favicon = input.favIconUrl;
+    duplicate.updatedAt = new Date().toISOString();
     return { tab: duplicate, added: false };
   }
   const tab = makeTabRecord(input);
@@ -242,6 +246,7 @@ async function openSavedTab(projectId, tabId) {
 
   saved.browserTabId = opened?.id ?? saved.browserTabId;
   saved.lastOpenedAt = new Date().toISOString();
+  saved.updatedAt = saved.lastOpenedAt;
   await saveState(state);
   return { tab: saved };
 }
@@ -254,29 +259,55 @@ async function moveOrCopyTabs({ sourceProjectId, targetProjectId, tabIds, copy }
   if (sourceProjectId === targetProjectId) throw new Error('来源和目标项目不能相同');
 
   const selected = source.tabs.filter((tab) => tabIds.includes(tab.id));
-  for (const tab of selected) {
-    if (!target.tabs.some((item) => item.url === tab.url)) {
-      target.tabs.unshift(copy ? { ...clone(tab), id: createId('tab'), addedAt: new Date().toISOString() } : tab);
-    }
-  }
-  if (!copy) source.tabs = source.tabs.filter((tab) => !tabIds.includes(tab.id));
   const now = new Date().toISOString();
+  for (const tab of selected) {
+    if (target.tabs.some((item) => item.url === tab.url)) continue;
+    const moved = copy ? { ...clone(tab), id: createId('tab'), addedAt: now, updatedAt: now } : tab;
+    if (!copy) moved.updatedAt = now;
+    target.tabs.unshift(moved);
+  }
+  if (!copy) {
+    for (const tab of selected) recordDeletion(state, 'tab', tab.id, sourceProjectId);
+    source.tabs = source.tabs.filter((tab) => !tabIds.includes(tab.id));
+  }
   source.updatedAt = now;
   target.updatedAt = now;
   return saveState(state);
 }
 
-async function performSync(direction, stateOverride) {
+function recordDeletion(state, kind, id, projectId = null) {
+  if (!Array.isArray(state.deletions)) state.deletions = [];
+  state.deletions.push(createDeletion(kind, id, projectId));
+}
+
+function stripTabIds(state) {
+  for (const project of state.projects) {
+    for (const tab of project.tabs) tab.browserTabId = null;
+  }
+  return state;
+}
+
+// browserTabId 是本机浏览器的标签页句柄，跨设备没有意义，永不写入远端；
+// state.updatedAt 是本地保存水位，不参与“是否有差异”的判断，避免双方互相推送。
+function serializeForRemote(state) {
+  return JSON.stringify(state, (key, value) => (key === 'browserTabId' ? undefined : value), 2);
+}
+
+function remoteKey(state) {
+  return JSON.stringify({ ...state, updatedAt: '' }, (key, value) => (key === 'browserTabId' ? undefined : value), 2);
+}
+
+async function performSyncOneWay(direction, stateOverride) {
   const state = stateOverride ? normalizeState(stateOverride) : await loadState();
   const provider = state.settings.syncProvider;
   if (provider === 'browser') {
     if (direction === 'upload') {
-      await chrome.storage.sync.set({ [SYNC_KEY]: state });
+      await chrome.storage.sync.set({ [SYNC_KEY]: JSON.parse(serializeForRemote(state)) });
       return { provider: 'browser', direction, state };
     }
     const stored = await chrome.storage.sync.get(SYNC_KEY);
     if (!stored[SYNC_KEY]) throw new Error('浏览器同步空间里还没有 Project Tab 数据');
-    const next = await saveState(stored[SYNC_KEY]);
+    const next = await saveState(stripTabIds(normalizeState(stored[SYNC_KEY])));
     return { provider: 'browser', direction, state: next };
   }
 
@@ -287,7 +318,7 @@ async function performSync(direction, stateOverride) {
     const response = await fetch(targetUrl, {
       method: 'PUT',
       headers,
-      body: JSON.stringify(state, null, 2),
+      body: serializeForRemote(state),
       redirect: 'follow',
       cache: 'no-store'
     });
@@ -302,9 +333,84 @@ async function performSync(direction, stateOverride) {
   } catch {
     throw new Error(`WebDAV 下载成功，但返回的不是有效 JSON。\n目标：${safeWebDavTarget(targetUrl)}`);
   }
-  const remote = normalizeState(remotePayload);
-  const next = await saveState(remote);
+  const next = await saveState(stripTabIds(normalizeState(remotePayload)));
   return { provider: 'webdav', direction, state: next, targetUrl: safeWebDavTarget(targetUrl) };
+}
+
+async function readRemoteState(provider, state) {
+  if (provider === 'browser') {
+    const stored = await chrome.storage.sync.get(SYNC_KEY);
+    return { remote: stored[SYNC_KEY] ? normalizeState(stored[SYNC_KEY]) : null, targetUrl: null };
+  }
+  const config = state.settings.webdav;
+  const targetUrl = normalizeWebDavUrl(config?.url);
+  const response = await fetch(targetUrl, { method: 'GET', headers: webDavHeaders(config), redirect: 'follow', cache: 'no-store' });
+  if (response.status === 404) return { remote: null, targetUrl };
+  if (!response.ok) await throwWebDavError(response, targetUrl, 'download');
+  let payload;
+  try {
+    payload = JSON.parse(await response.text());
+  } catch {
+    throw new Error(`WebDAV 下载成功，但返回的不是有效 JSON。\n目标：${safeWebDavTarget(targetUrl)}`);
+  }
+  return { remote: normalizeState(payload), targetUrl };
+}
+
+async function writeRemoteState(provider, state, targetUrl) {
+  if (provider === 'browser') {
+    await chrome.storage.sync.set({ [SYNC_KEY]: JSON.parse(serializeForRemote(state)) });
+    return;
+  }
+  const config = state.settings.webdav;
+  const response = await fetch(targetUrl, {
+    method: 'PUT',
+    headers: webDavHeaders(config, true),
+    body: serializeForRemote(state),
+    redirect: 'follow',
+    cache: 'no-store'
+  });
+  if (!response.ok) await throwWebDavError(response, targetUrl, 'upload');
+}
+
+async function performSyncBoth(stateOverride) {
+  const state = stateOverride ? normalizeState(stateOverride) : await loadState();
+  const provider = state.settings.syncProvider;
+  const read = await readRemoteState(provider, state);
+  const remote = read.remote;
+  const local = normalizeState(state);
+  const merged = remote ? mergeStates(local, remote) : local;
+
+  const changed = remoteKey(merged) !== remoteKey(local);
+  const finalState = changed ? await saveState(merged) : local;
+
+  const remoteStale = !remote || remoteKey(finalState) !== remoteKey(remote);
+  if (remoteStale) await writeRemoteState(provider, finalState, read.targetUrl);
+
+  return {
+    provider,
+    direction: 'both',
+    state: finalState,
+    changed,
+    pushed: remoteStale,
+    targetUrl: read.targetUrl ? safeWebDavTarget(read.targetUrl) : undefined
+  };
+}
+
+let syncChain = Promise.resolve();
+
+function performSync(direction, stateOverride) {
+  const task = syncChain.then(
+    () => runSync(direction, stateOverride),
+    () => runSync(direction, stateOverride)
+  );
+  syncChain = task.catch(() => {});
+  return task;
+}
+
+async function runSync(direction, stateOverride) {
+  return direction === 'both'
+    ? performSyncBoth(stateOverride)
+    : performSyncOneWay(direction, stateOverride);
 }
 
 async function scheduleSync(state) {
@@ -320,6 +426,7 @@ async function scheduleSync(state) {
 
 async function updateSettings(patch) {
   const state = await loadState();
+  const previous = JSON.stringify(state.settings);
   state.settings = {
     ...state.settings,
     ...patch,
@@ -327,6 +434,9 @@ async function updateSettings(patch) {
     webdav: { ...state.settings.webdav, ...(patch.webdav || {}) },
     ai: { ...state.settings.ai, ...(patch.ai || {}) }
   };
+  if (JSON.stringify(state.settings) !== previous) {
+    state.settings.updatedAt = new Date().toISOString();
+  }
   const next = await saveState(state);
   await scheduleSync(next);
   return next;
@@ -523,6 +633,7 @@ async function handleMessage(message, sender) {
       const project = projectById(state, message.projectId);
       if (!project) throw new Error('找不到项目');
       project.collapsed = !project.collapsed;
+      project.updatedAt = new Date().toISOString();
       return saveState(state);
     }
     case 'ARCHIVE_PROJECT': {
@@ -537,6 +648,7 @@ async function handleMessage(message, sender) {
     case 'DELETE_PROJECT': {
       const state = await loadState();
       if (state.projects.length <= 1) throw new Error('至少保留一个项目');
+      recordDeletion(state, 'project', message.projectId);
       state.projects = state.projects.filter((project) => project.id !== message.projectId);
       return saveState(state);
     }
@@ -586,6 +698,7 @@ async function handleMessage(message, sender) {
       const tab = tabById(project, message.tabId);
       if (!tab) throw new Error('找不到标签页');
       tab.starred = !tab.starred;
+      tab.updatedAt = new Date().toISOString();
       project.updatedAt = new Date().toISOString();
       return saveState(state);
     }
@@ -596,6 +709,7 @@ async function handleMessage(message, sender) {
       if (!tab) throw new Error('找不到标签页');
       tab.note = message.note || { blocks: [], updatedAt: null };
       tab.note.updatedAt = new Date().toISOString();
+      tab.updatedAt = tab.note.updatedAt;
       project.updatedAt = new Date().toISOString();
       return saveState(state);
     }
@@ -619,6 +733,11 @@ async function handleMessage(message, sender) {
       const state = await loadState();
       const project = projectById(state, message.projectId);
       if (!project) throw new Error('找不到项目');
+      for (const tabId of message.tabIds || []) {
+        if (project.tabs.some((tab) => tab.id === tabId)) {
+          recordDeletion(state, 'tab', tabId, message.projectId);
+        }
+      }
       project.tabs = project.tabs.filter((tab) => !message.tabIds.includes(tab.id));
       project.updatedAt = new Date().toISOString();
       return saveState(state);
@@ -628,11 +747,11 @@ async function handleMessage(message, sender) {
     case 'UPDATE_SETTINGS':
       return updateSettings(message.patch || {});
     case 'SYNC':
-      return performSync(message.direction || 'upload');
+      return performSync(message.direction || 'both');
     case 'WEBDAV_TEST':
       return testWebDav(await loadState());
     case 'IMPORT_STATE':
-      return saveState(message.state);
+      return saveState(stripTabIds(normalizeState(message.state)));
     case 'OPEN_SIDE_PANEL': {
       if (!chrome.sidePanel?.open) throw new Error('当前浏览器不支持 Side Panel API');
       const active = sender?.tab || await getActiveTab();
@@ -652,6 +771,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true;
 });
 
+let autoSyncTimer = null;
+
+function scheduleAutoSync(delayMs = AUTO_SYNC_DEBOUNCE_MS) {
+  if (!chrome.storage) return;
+  if (autoSyncTimer) clearTimeout(autoSyncTimer);
+  autoSyncTimer = setTimeout(triggerAutoSync, delayMs);
+}
+
+async function triggerAutoSync() {
+  autoSyncTimer = null;
+  try {
+    const state = await loadState();
+    if (!state.settings.autoSync) return;
+    await performSync('both');
+  } catch (error) {
+    console.warn('Project Tab 自动同步失败', error);
+  }
+}
+
 chrome.runtime.onInstalled.addListener(async () => {
   const state = await loadState();
   await scheduleSync(state);
@@ -666,10 +804,10 @@ chrome.runtime.onStartup?.addListener(async () => {
 
 chrome.alarms?.onAlarm.addListener(async (alarm) => {
   if (alarm.name !== ALARM_NAME) return;
-  const state = await loadState();
-  if (!state.settings.autoSync) return;
   try {
-    await performSync('upload', state);
+    const state = await loadState();
+    if (!state.settings.autoSync) return;
+    await performSync('both');
   } catch (error) {
     console.warn('Project Tab 自动同步失败', error);
   }
@@ -683,11 +821,16 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   for (const project of state.projects) {
     for (const saved of project.tabs) {
       if (saved.browserTabId === tabId) {
+        const title = tab.title || saved.title;
+        const touched = saved.title !== title || saved.url !== tab.url;
         saved.url = tab.url;
-        saved.title = tab.title || saved.title;
+        saved.title = title;
         saved.favicon = tab.favIconUrl || saved.favicon;
         saved.domain = domainFromUrl(tab.url);
-        project.updatedAt = new Date().toISOString();
+        if (touched) {
+          saved.updatedAt = new Date().toISOString();
+          project.updatedAt = saved.updatedAt;
+        }
         changed = true;
       }
     }
@@ -712,6 +855,11 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
 chrome.storage.onChanged.addListener(async (changes, areaName) => {
   if (areaName === 'local' && changes[STORAGE_KEY]?.newValue) {
     await scheduleSync(normalizeState(changes[STORAGE_KEY].newValue));
+    scheduleAutoSync();
+  }
+  // 浏览器同步空间出现新版本（另一台设备推送）时，也尽快拉取合并。
+  if (areaName === 'sync' && changes[SYNC_KEY]?.newValue) {
+    scheduleAutoSync();
   }
 });
 

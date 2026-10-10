@@ -1,4 +1,4 @@
-import { apiCall, escapeHtml, icon } from './shared.js';
+import { apiCall, CONTEXT_INVALIDATED_MESSAGE, escapeHtml, icon, isExtensionContextAlive } from './shared.js';
 
 const app = document.querySelector('#options-app');
 let state = null;
@@ -57,7 +57,7 @@ function render() {
           <div class="field"><label>显示方式</label><div class="choice-row"><label class="choice"><input type="radio" name="sidebarMode" value="fixed" ${settings.sidebarMode === 'fixed' ? 'checked' : ''}><strong>固定显示</strong><small>使用浏览器 Side Panel 持续打开</small></label><label class="choice"><input type="radio" name="sidebarMode" value="edge" ${settings.sidebarMode === 'edge' ? 'checked' : ''}><strong>左侧边缘触发</strong><small>鼠标靠近网页左边缘时显示触发条</small></label></div></div>
           <div class="field"><label>触发高度范围</label><div class="percent-range-row"><label class="percent-field" for="trigger-start"><span>从顶部</span><span class="percent-input"><input id="trigger-start" type="number" min="0" max="99" step="1" value="${settings.triggerRange.startPercent}"><span>%</span></span></label><span class="percent-separator">至</span><label class="percent-field" for="trigger-end"><span>到顶部</span><span class="percent-input"><input id="trigger-end" type="number" min="1" max="100" step="1" value="${settings.triggerRange.endPercent}"><span>%</span></span></label><span class="range-value" id="trigger-range-value">${settings.triggerRange.startPercent}% – ${settings.triggerRange.endPercent}%</span></div><div class="help">按网页高度从上到下计算，0% 是顶部、100% 是底部。只有这段左侧区域会触发面板，例如 20%–30%。</div></div>
           <div class="field"><label for="trigger-width">触发条宽度</label><div class="range-line"><input id="trigger-width" type="range" min="0" max="80" step="1" value="${settings.triggerWidth}"><span class="range-value" id="trigger-width-value">${settings.triggerWidth}px</span></div><div class="help">默认为 0px，不显示绿色触发条；鼠标贴近页面左缘时仍可打开面板。</div></div>
-          <div class="field"><label class="switch-row"><input id="auto-sync" type="checkbox" ${settings.autoSync ? 'checked' : ''}><span>开启自动同步</span></label><div class="help">自动同步只会写入你选定的浏览器同步空间或 WebDAV。</div></div>
+          <div class="field"><label class="switch-row"><input id="auto-sync" type="checkbox" ${settings.autoSync ? 'checked' : ''}><span>开启自动同步</span></label><div class="help">开启后本地修改会在数秒内自动与选定的目的地（浏览器同步空间或 WebDAV）双向合并，定时与浏览器启动时也会执行。合并按项目/标签页的修改时间取较新一方，双方的新增和修改都会保留。</div></div>
           <div class="field"><label for="auto-sync-hours">自动同步间隔（小时）</label><input id="auto-sync-hours" type="number" min="1" max="168" value="${settings.autoSyncIntervalHours}"></div>
         </section>
         <section class="card"><div class="section-head"><div><h2>同步方式</h2><p>支持浏览器账户同步或自有 WebDAV 文件。</p></div></div>
@@ -65,7 +65,7 @@ function render() {
           <div class="field"><label for="webdav-url">WebDAV 文件或目录地址</label><input id="webdav-url" type="url" value="${escapeHtml(settings.webdav.url)}" placeholder="https://dav.jianguoyun.com/dav/projecttab/project-tab.json"><div class="help">可填写文件地址，也可填写目录地址；目录地址会自动使用其中的 project-tab.json，但父目录需先在坚果云中存在。坚果云可填写 /dav/projecttab 或 /dav/projecttab/，密码请使用第三方应用密码。账号密码仅保存在本机扩展存储中。</div></div>
           <div class="field"><label for="webdav-user">WebDAV 用户名</label><input id="webdav-user" type="text" value="${escapeHtml(settings.webdav.username)}" autocomplete="off"></div>
           <div class="field"><label for="webdav-password">WebDAV 密码</label><input id="webdav-password" type="password" value="${escapeHtml(settings.webdav.password)}" autocomplete="off"></div>
-          <div class="actions"><button class="button primary" data-action="save-settings">保存设置</button><button class="button" data-action="sync-browser-upload">${icon('upload', 14)}上传到浏览器同步</button><button class="button" data-action="sync-browser-download">${icon('download', 14)}从浏览器同步下载</button><button class="button" data-action="test-webdav">${icon('info', 14)}测试 WebDAV</button><button class="button" data-action="sync-webdav-upload">${icon('upload', 14)}上传到 WebDAV</button><button class="button" data-action="sync-webdav-download">${icon('download', 14)}从 WebDAV 下载</button></div><div class="status" id="sync-status"></div>
+          <div class="actions"><button class="button primary" data-action="save-settings">保存设置</button><button class="button" data-action="sync-both">${icon('sync', 14)}双向同步（合并）</button><button class="button" data-action="sync-browser-upload">${icon('upload', 14)}上传到浏览器同步</button><button class="button" data-action="sync-browser-download">${icon('download', 14)}从浏览器同步下载</button><button class="button" data-action="test-webdav">${icon('info', 14)}测试 WebDAV</button><button class="button" data-action="sync-webdav-upload">${icon('upload', 14)}上传到 WebDAV</button><button class="button" data-action="sync-webdav-download">${icon('download', 14)}从 WebDAV 下载</button></div><div class="help">多设备请使用「双向同步（合并）」：先合并远端与本地再推送，不会覆盖另一台电脑的修改。上传/下载按钮为单向整体覆盖，谨慎使用。</div><div class="status" id="sync-status"></div>
         </section>
       </div>
       <div>
@@ -157,18 +157,33 @@ async function saveSettings() {
 }
 
 async function sync(direction, provider) {
-  setSyncStatus(`正在${direction === 'upload' ? '上传' : '下载'}…`);
+  const label = direction === 'both' ? '双向同步' : direction === 'upload' ? '上传' : '下载';
+  setSyncStatus(`正在${label}…`);
   if (provider) {
     const patch = { syncProvider: provider };
     const form = formSettings();
     patch.webdav = form.webdav;
     state = await apiCall('UPDATE_SETTINGS', { patch });
   }
+  if (direction === 'both') {
+    const form = formSettings();
+    state = await apiCall('UPDATE_SETTINGS', { patch: { syncProvider: form.syncProvider, webdav: form.webdav } });
+  }
   const result = await apiCall('SYNC', { direction });
   state = result.state;
   render();
-  setSyncStatus(`同步${direction === 'upload' ? '上传' : '下载'}完成${result.targetUrl ? `\n目标：${result.targetUrl}` : ''}`);
-  notify(`同步${direction === 'upload' ? '上传' : '下载'}完成`);
+  if (direction === 'both') {
+    const details = [
+      `双向同步完成：${result.changed ? '本地已合并远端修改' : '本地无变化'}`,
+      result.pushed ? '已写回远端' : '远端已最新'
+    ];
+    if (result.targetUrl) details.push(`目标：${result.targetUrl}`);
+    setSyncStatus(details.join('\n'));
+    notify('双向同步完成');
+    return;
+  }
+  setSyncStatus(`同步${label}完成${result.targetUrl ? `\n目标：${result.targetUrl}` : ''}`);
+  notify(`同步${label}完成`);
 }
 
 async function testWebDav() {
@@ -262,6 +277,9 @@ app.addEventListener('click', async (event) => {
       case 'save-settings':
         await saveSettings();
         break;
+      case 'sync-both':
+        await sync('both');
+        break;
       case 'sync-browser-upload':
         await sync('upload', 'browser');
         break;
@@ -290,11 +308,12 @@ app.addEventListener('click', async (event) => {
         break;
     }
   } catch (error) {
+    const message = isExtensionContextAlive() ? error.message : CONTEXT_INVALIDATED_MESSAGE;
     if (button.dataset.action.includes('sync') || button.dataset.action === 'test-webdav') {
-      setSyncStatus(error.message, true);
+      setSyncStatus(message, true);
     }
-    if (button.dataset.action === 'test-ai') setAiStatus(error.message, true);
-    notify(error.message, true);
+    if (button.dataset.action === 'test-ai') setAiStatus(message, true);
+    notify(message, true);
   }
 });
 
