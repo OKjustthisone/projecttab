@@ -343,14 +343,16 @@
     .bubble .swatch { width: 17px; height: 17px; }
     .bubble .swatch.active { border-color: #14201a; }
     .b-btn {
-      height: 27px; padding: 0 11px;
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 30px; height: 30px; padding: 0;
       border: 0; border-radius: 8px;
       background: #eaf1ed; color: #274038;
-      font: 600 12px/1 inherit; cursor: pointer;
+      cursor: pointer;
     }
+    .b-btn svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
     .b-btn:hover { background: #dde9e2; }
-    .b-btn.primary { background: #1ca96d; color: #fff; }
-    .b-btn.primary:hover { background: #17b173; }
+    .b-btn.primary { background: transparent; color: #1ca96d; }
+    .b-btn.primary:hover { background: #e8f5ed; }
     .b-btn.danger { background: transparent; color: #d64545; }
     .b-btn.danger:hover { background: #fdecec; }
     .toast {
@@ -390,9 +392,12 @@
         `<button class="swatch" data-color="${color.name}" style="--c:${color.hex}" title="${color.title}" aria-label="${color.title}"></button>`
       ).join('')}
       <span class="grow"></span>
-      <button class="b-btn danger" data-act="delete">删除</button>
-      <button class="b-btn" data-act="close">关闭</button>
-      <button class="b-btn primary" data-act="save">保存</button>
+      <button class="b-btn danger" data-act="delete" title="删除标记" aria-label="删除标记">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="m19 6-1 14H6L5 6"/><path d="M10 11v5M14 11v5"/></svg>
+      </button>
+      <button class="b-btn primary" data-act="save" title="保存评论" aria-label="保存评论">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg>
+      </button>
     </div>`;
 
   const toast = document.createElement('div');
@@ -647,7 +652,6 @@
     const act = event.target.closest('[data-act]')?.dataset.act;
     if (act === 'save') saveBubble();
     else if (act === 'delete') deleteBubble();
-    else if (act === 'close') closeBubble();
   });
 
   bubble.addEventListener('keydown', (event) => {

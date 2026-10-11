@@ -18,6 +18,13 @@ const ALARM_NAME = 'project-tab-auto-sync';
 const AUTO_SYNC_DEBOUNCE_MS = 10000;
 const WEBDAV_DEFAULT_FILENAME = 'project-tab.json';
 const JIANGUOYUN_WEBDAV_HOST = 'dav.jianguoyun.com';
+let annotationMutationQueue = Promise.resolve();
+
+function enqueueAnnotationMutation(operation) {
+  const result = annotationMutationQueue.then(operation, operation);
+  annotationMutationQueue = result.catch(() => {});
+  return result;
+}
 
 async function loadState() {
   const stored = await chrome.storage.local.get(STORAGE_KEY);
@@ -793,36 +800,42 @@ async function handleMessage(message, sender) {
       };
     }
     case 'SAVE_ANNOTATION': {
-      const state = await loadState();
-      const match = resolveAnnotationTarget(state, message, sender);
-      if (!match) throw new Error('请先收藏这个页面再添加标记');
-      const incoming = normalizeAnnotation(message.annotation);
-      const list = Array.isArray(match.tab.annotations) ? match.tab.annotations : [];
-      const index = list.findIndex((item) => item.id === incoming.id);
-      if (index >= 0) list[index] = incoming;
-      else list.push(incoming);
-      match.tab.annotations = list;
-      touchTab(match.project, match.tab);
-      return {
-        projectId: match.project.id,
-        tabId: match.tab.id,
-        annotations: match.tab.annotations
-      };
+      return enqueueAnnotationMutation(async () => {
+        const state = await loadState();
+        const match = resolveAnnotationTarget(state, message, sender);
+        if (!match) throw new Error('请先收藏这个页面再添加标记');
+        const incoming = normalizeAnnotation(message.annotation);
+        const list = Array.isArray(match.tab.annotations) ? match.tab.annotations : [];
+        const index = list.findIndex((item) => item.id === incoming.id);
+        if (index >= 0) list[index] = incoming;
+        else list.push(incoming);
+        match.tab.annotations = list;
+        touchTab(match.project, match.tab);
+        await saveState(state);
+        return {
+          projectId: match.project.id,
+          tabId: match.tab.id,
+          annotations: match.tab.annotations
+        };
+      });
     }
     case 'DELETE_ANNOTATION': {
-      const state = await loadState();
-      const match = resolveAnnotationTarget(state, message, sender);
-      if (!match) throw new Error('找不到这个页面的标记');
-      const now = new Date().toISOString();
-      match.tab.annotations = (match.tab.annotations || []).map((item) =>
-        item.id === message.annotationId ? { ...item, deletedAt: now, updatedAt: now } : item
-      );
-      touchTab(match.project, match.tab);
-      return {
-        projectId: match.project.id,
-        tabId: match.tab.id,
-        annotations: match.tab.annotations
-      };
+      return enqueueAnnotationMutation(async () => {
+        const state = await loadState();
+        const match = resolveAnnotationTarget(state, message, sender);
+        if (!match) throw new Error('找不到这个页面的标记');
+        const now = new Date().toISOString();
+        match.tab.annotations = (match.tab.annotations || []).map((item) =>
+          item.id === message.annotationId ? { ...item, deletedAt: now, updatedAt: now } : item
+        );
+        touchTab(match.project, match.tab);
+        await saveState(state);
+        return {
+          projectId: match.project.id,
+          tabId: match.tab.id,
+          annotations: match.tab.annotations
+        };
+      });
     }
     case 'SAVE_PROJECT_NOTE': {
       const state = await loadState();
