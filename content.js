@@ -8,7 +8,7 @@
   const DEFAULT_TRIGGER_START = 20;
   const DEFAULT_TRIGGER_END = 30;
   const DEFAULT_TRIGGER_WIDTH = 0;
-  const TRIGGER_HIT_WIDTH = 4;
+  const TRIGGER_EDGE_WIDTH = 1; // 光标必须真正贴住页面左缘（clientX ≤ 1px，零距离）才触发；含亚像素取整余量
   const PANEL_MAX_WIDTH = 390;
 
   const pageShiftStyle = document.createElement('style');
@@ -102,6 +102,7 @@
   let triggerEndPercent = DEFAULT_TRIGGER_END;
   let edgeTriggerArmed = true;
   let pinned = false;
+  let lastPointerX = -1; // 最近一次指针事件的页面横坐标，用于区分“光标滑入窗口边框”与“光标真正向右移开”
 
   const normalizePercent = (value, fallback) => {
     const number = Number(value);
@@ -126,6 +127,8 @@
   };
 
   const isPointerOverPanel = () => panel.matches(':hover');
+
+  const edgeHitWidth = () => Math.max(TRIGGER_EDGE_WIDTH, triggerWidth);
 
   const syncPageShift = () => {
     const shouldPushPage = isEdgeMode && pinned && panel.classList.contains('open');
@@ -188,10 +191,11 @@
     if (!isEdgeMode) return false;
     const top = window.innerHeight * triggerStartPercent / 100;
     const bottom = window.innerHeight * triggerEndPercent / 100;
-    return event.clientX <= Math.max(TRIGGER_HIT_WIDTH, triggerWidth) && event.clientY >= top && event.clientY <= bottom;
+    return event.clientX <= edgeHitWidth() && event.clientY >= top && event.clientY <= bottom;
   };
 
   window.addEventListener('pointermove', (event) => {
+    lastPointerX = event.clientX;
     const inZone = isInTriggerZone(event);
     if (!inZone) edgeTriggerArmed = true;
     if (!panel.classList.contains('open')) {
@@ -202,7 +206,12 @@
   }, { passive: true });
 
   panel.addEventListener('load', syncPinState);
-  panel.addEventListener('pointerleave', closeIfPointerOutside);
+  panel.addEventListener('pointerleave', () => {
+    // 光标贴在页面左缘时浏览器窗口边框（尤其 Edge 非最大化时的窗口边框）会“接管”指针，
+    // 页面 hover 状态丢失触发 pointerleave，但这不属于“用户把光标移开了”；
+    // 只有光标已离开贴边区（向右移动）才允许自动收起，剩余方向由 window pointermove 跟进关闭。
+    if (lastPointerX < 0 || lastPointerX > edgeHitWidth()) closeIfPointerOutside();
+  });
   window.addEventListener('resize', syncPageShift, { passive: true });
 
   const readSettings = async () => {
