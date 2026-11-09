@@ -109,6 +109,26 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .tab-row { min-height: 48px; display: flex; align-items: center; gap: 7px; padding: 6px 5px; border-radius: 10px; cursor: pointer; transition: .14s ease; }
 .tab-row:hover { background: var(--green-050); }
 .tab-row.selected { background: var(--green-100); }
+.tab-row.is-current {
+  background: color-mix(in srgb, var(--tab-current-color, #16a568) 11%, var(--surface));
+  box-shadow: inset 3px 0 0 var(--tab-current-color, #16a568);
+}
+.tab-row.is-current:hover {
+  background: color-mix(in srgb, var(--tab-current-color, #16a568) 17%, var(--surface));
+}
+.tab-current-tag {
+  display: none;
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  border: 1px solid color-mix(in srgb, var(--tab-current-color, #16a568) 36%, transparent);
+  border-radius: 999px;
+  color: var(--ink);
+  background: color-mix(in srgb, var(--tab-current-color, #16a568) 20%, var(--surface));
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+.tab-row.is-current .tab-current-tag { display: inline-flex; }
 .tab-check { width: 15px; height: 15px; accent-color: var(--green-600); flex: 0 0 15px; }
 .tab-favicon { width: 27px; height: 27px; flex: 0 0 27px; display: grid; place-items: center; border-radius: 8px; overflow: hidden; background: #edf5ef; color: var(--green-700); font-weight: 700; font-size: 11px; }
 .tab-favicon img { width: 18px; height: 18px; object-fit: contain; }
@@ -161,6 +181,22 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .modal-header strong { font-size: 14px; }
 .modal-body { min-height: 0; overflow: auto; padding: 15px; }
 .modal-footer { display: flex; justify-content: flex-end; gap: 7px; padding: 11px 15px; border-top: 1px solid var(--line); }
+.modal-footer .grow { flex: 1; }
+.note-modal { width: min(100%, 560px); }
+.note-page-title { margin-bottom: 12px; }
+.note-page-title strong { display: block; font-size: 13px; line-height: 1.45; }
+.note-page-title small { display: block; margin-top: 3px; color: var(--muted); font-size: 10px; word-break: break-all; }
+.note-modal .note-blocks { max-height: 280px; }
+.note-modal .field textarea { min-height: 140px; }
+.note-modal.is-expanded {
+  width: 100%;
+  max-width: 100%;
+  height: calc(100dvh - 32px);
+  max-height: calc(100dvh - 32px);
+  border-radius: 14px;
+}
+.note-modal.is-expanded .note-blocks { max-height: 46vh; }
+.note-modal.is-expanded .field textarea { min-height: 170px; }
 .field { margin-bottom: 12px; }
 .field:last-child { margin-bottom: 0; }
 .field label { display: block; margin-bottom: 6px; color: var(--muted); font-size: 11px; font-weight: 600; }

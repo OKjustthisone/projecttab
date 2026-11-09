@@ -58,7 +58,7 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["edge-panel.html", "sidepanel.css", "sidepanel.js", "shared.js", "logo.png"],
+      "resources": ["edge-panel.html", "note-editor.html", "note-editor.css", "note-editor.js", "sidepanel.css", "sidepanel.js", "shared.js", "logo.png"],
       "matches": ["http://*/*", "https://*/*"]
     }
   ]

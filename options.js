@@ -47,6 +47,8 @@ function render() {
     return;
   }
   const settings = state.settings;
+  // “项目”统计只计算最高层文件夹，子文件夹不重复计数。
+  const projects = state.projects.filter((project) => !project.parentId).length;
   const tabs = state.projects.reduce((sum, project) => sum + project.tabs.length, 0);
   const notes = state.projects.reduce((sum, project) => sum + project.tabs.reduce((tabSum, tab) => tabSum + (tab.note?.blocks?.length || 0), 0), 0);
   app.innerHTML = `<div class="settings-shell">
@@ -69,6 +71,12 @@ function render() {
         </section>
       </div>
       <div>
+        <section class="card"><div class="section-head"><div><h2>主面板显示</h2><p>控制标签页列表中的当前页面提示与笔记编辑方式。</p></div></div>
+          <div class="field"><label class="switch-row"><input id="highlight-active-tab" type="checkbox" ${settings.highlightActiveTab ? 'checked' : ''}><span>高亮当前浏览器标签页</span></label><div class="help">在主面板的标签页列表中，用颜色标出当前正在浏览的页面，并显示“当前”标签。</div></div>
+          <div class="field"><label for="active-tab-highlight-color">当前标签页高亮颜色</label><div class="color-field-row"><input id="active-tab-highlight-color" type="color" value="${escapeHtml(settings.activeTabHighlightColor)}"><span class="color-value" id="active-tab-highlight-color-value">${escapeHtml(settings.activeTabHighlightColor)}</span></div><div class="help">选择任意颜色；面板会把它用于当前标签页的背景、左侧色条和“当前”标签。</div></div>
+          <div class="field"><label>标签页笔记打开方式</label><div class="choice-row"><label class="choice"><input type="radio" name="noteEditorMode" value="panel" ${settings.noteEditorMode !== 'window' ? 'checked' : ''}><strong>面板内编辑</strong><small>在侧边栏弹窗中编辑，可随时放大</small></label><label class="choice"><input type="radio" name="noteEditorMode" value="window" ${settings.noteEditorMode === 'window' ? 'checked' : ''}><strong>独立大窗口</strong><small>直接打开约 940px 宽的笔记编辑器</small></label></div><div class="help">无论选择哪种方式，笔记弹窗右上角都提供“在独立大窗口编辑”按钮。</div></div>
+          <div class="actions"><button class="button primary" data-action="save-settings">保存显示设置</button></div>
+        </section>
         <section class="card"><div class="section-head"><div><h2>AI 笔记分析</h2><p>默认使用本地规则分析标题、来源和笔记；也可接入兼容 OpenAI Chat Completions 的自定义接口。</p></div></div>
           <div class="field"><label for="ai-preset">常用服务预设</label><select id="ai-preset">${AI_PRESETS.map((preset) => `<option value="${preset.id}" ${selectedAiPreset(settings.ai) === preset.id ? 'selected' : ''}>${preset.label}</option>`).join('')}</select><div class="help">选择后自动填写 Endpoint 和推荐模型；API Key 仍需自行填写并只保存在本机。</div></div>
           <div class="field"><label for="ai-endpoint">自定义 AI Endpoint（可选）</label><input id="ai-endpoint" type="url" value="${escapeHtml(settings.ai.endpoint)}" placeholder="https://api.example.com/v1/chat/completions"></div>
@@ -78,7 +86,7 @@ function render() {
           <div class="subtle">没有配置 Endpoint 时，点击项目名右侧的 ✦ 仍会生成本地摘要、来源聚类、关键词和标签页关联。需要外部模型时，请确认服务端的隐私与跨域策略。</div>
         </section>
         <section class="card"><div class="section-head"><div><h2>数据管理</h2><p>导出的是 Project Tab 自己的 JSON，不含浏览器收藏夹。</p></div></div>
-          <div class="data-stat"><div class="stat"><strong>${state.projects.length}</strong><span>项目</span></div><div class="stat"><strong>${tabs}</strong><span>标签页</span></div><div class="stat"><strong>${notes}</strong><span>笔记块</span></div></div>
+          <div class="data-stat"><div class="stat"><strong>${projects}</strong><span>项目</span></div><div class="stat"><strong>${tabs}</strong><span>标签页</span></div><div class="stat"><strong>${notes}</strong><span>笔记块</span></div></div>
           <div class="actions"><button class="button" data-action="export-json">${icon('download', 14)}导出 JSON</button><label class="button file-button">${icon('upload', 14)}导入 JSON<input id="import-json" type="file" accept="application/json,.json"></label></div>
           <p class="footer-note">提示：图片笔记会以 data URL 存进 JSON，文件可能较大。跨设备同步前可以先导出一份备份。</p>
         </section>
@@ -136,6 +144,9 @@ function formSettings() {
     },
     autoSync: Boolean(document.querySelector('#auto-sync')?.checked),
     autoSyncIntervalHours: Number(document.querySelector('#auto-sync-hours')?.value || 6),
+    highlightActiveTab: Boolean(document.querySelector('#highlight-active-tab')?.checked),
+    activeTabHighlightColor: document.querySelector('#active-tab-highlight-color')?.value || '#16a568',
+    noteEditorMode: document.querySelector('input[name="noteEditorMode"]:checked')?.value === 'window' ? 'window' : 'panel',
     syncProvider: document.querySelector('#sync-provider')?.value || 'browser',
     webdav: {
       url: document.querySelector('#webdav-url')?.value.trim() || '',
@@ -227,6 +238,10 @@ function exportJson() {
 }
 
 app.addEventListener('input', (event) => {
+  if (event.target.id === 'active-tab-highlight-color') {
+    const value = document.querySelector('#active-tab-highlight-color-value');
+    if (value) value.textContent = event.target.value;
+  }
   if (event.target.id === 'trigger-width') {
     const value = document.querySelector('#trigger-width-value');
     if (value) value.textContent = `${event.target.value}px`;

@@ -1,6 +1,7 @@
 import {
   apiCall,
   clone,
+  collectNoteText,
   escapeHtml,
   formatDate,
   icon,
@@ -30,6 +31,8 @@ let toastTimer = null;
 const isEdgePanel = window.location.pathname.endsWith('/edge-panel.html');
 let panelPinned = false;
 let edgePanelWindowId = null;
+let activeBrowserTab = null;
+let activeTabRefreshTimer = null;
 
 function postPanelMessage(type, payload = {}) {
   if (!isEdgePanel) return;
@@ -105,6 +108,10 @@ function annotationSearchText(tab) {
     .trim();
 }
 
+function tabSearchText(tab) {
+  return `${tab.title || ''} ${tab.url || ''} ${tab.domain || ''} ${collectNoteText(tab)} ${annotationSearchText(tab)}`.toLowerCase();
+}
+
 function liveAnnotations(tab) {
   return (tab?.annotations || []).filter((item) => !item.deletedAt);
 }
@@ -112,15 +119,85 @@ function liveAnnotations(tab) {
 function projectMatches(project) {
   const query = searchQuery.trim().toLowerCase();
   if (!query) return true;
-  return project.name.toLowerCase().includes(query) || project.tabs.some((tab) =>
-    `${tab.title} ${tab.url} ${tab.domain} ${annotationSearchText(tab)}`.toLowerCase().includes(query)
-  );
+  if (`${project.name || ''} ${project.projectNote?.text || ''}`.toLowerCase().includes(query)) return true;
+  return project.tabs.some((tab) => tabSearchText(tab).includes(query));
 }
 
 function visibleTabs(project) {
   const query = searchQuery.trim().toLowerCase();
   if (!query) return project.tabs;
-  return project.tabs.filter((tab) => `${tab.title} ${tab.url} ${tab.domain} ${annotationSearchText(tab)}`.toLowerCase().includes(query));
+  return project.tabs.filter((tab) => tabSearchText(tab).includes(query));
+}
+
+function comparableUrl(value) {
+  try {
+    const url = new URL(value);
+    url.hash = '';
+    return url.href;
+  } catch {
+    return String(value || '');
+  }
+}
+
+function savedTabIsActive(tab) {
+  if (!tab || !state?.settings?.highlightActiveTab || !activeBrowserTab) return false;
+  if (activeBrowserTab.id != null && tab.browserTabId === activeBrowserTab.id) return true;
+  return Boolean(activeBrowserTab.url) && comparableUrl(tab.url) === comparableUrl(activeBrowserTab.url);
+}
+
+function applyActiveTabHighlight() {
+  const color = state?.settings?.activeTabHighlightColor || '#16a568';
+  document.querySelectorAll('.tab-row[data-tab-id]').forEach((row) => {
+    const tab = getTab(row.dataset.projectId, row.dataset.tabId);
+    const current = savedTabIsActive(tab);
+    row.classList.toggle('is-current', current);
+    if (current) row.setAttribute('aria-current', 'page');
+    else row.removeAttribute('aria-current');
+    row.style.setProperty('--tab-current-color', color);
+  });
+}
+
+async function queryPanelActiveTab() {
+  if (!chrome.tabs?.query) return null;
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tab) return tab;
+  } catch {
+    // 少数嵌入环境（如网页内 iframe 面板）可能不支持 currentWindow，继续尝试 lastFocusedWindow。
+  }
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    return tab || null;
+  } catch {
+    return null;
+  }
+}
+
+async function refreshActiveBrowserTab() {
+  if (!state?.settings?.highlightActiveTab) {
+    activeBrowserTab = null;
+    applyActiveTabHighlight();
+    return;
+  }
+  if (!isExtensionContextAlive()) {
+    activeBrowserTab = null;
+    applyActiveTabHighlight();
+    return;
+  }
+  const tab = await queryPanelActiveTab();
+  activeBrowserTab = tab
+    ? {
+        id: Number.isInteger(tab.id) ? tab.id : null,
+        url: tab.url || '',
+        title: tab.title || ''
+      }
+    : null;
+  applyActiveTabHighlight();
+}
+
+function scheduleActiveTabRefresh(delay = 80) {
+  clearTimeout(activeTabRefreshTimer);
+  activeTabRefreshTimer = setTimeout(refreshActiveBrowserTab, delay);
 }
 
 function childProjects(projectId) {
@@ -178,7 +255,8 @@ function renderTopbar() {
 
 function renderSummary() {
   const activeProjects = state.projects.filter((project) => !project.archived);
-  const projects = activeProjects.length;
+  // 项目数只统计最高层文件夹，子文件夹归入所属项目，不重复计数。
+  const projects = activeProjects.filter((project) => !project.parentId).length;
   const tabs = activeProjects.reduce((total, project) => total + project.tabs.length, 0);
   const starred = activeProjects.reduce((total, project) => total + project.tabs.filter((tab) => tab.starred).length, 0);
   return `<footer class="panel-summary">${projects} 个项目 · ${tabs} 个标签页 · ${starred} 个重要页面</footer>`;
@@ -188,17 +266,22 @@ function renderTab(project, tab, isManage) {
   const selected = selectedSet(project.id).has(tab.id);
   const noteReady = tab.note?.blocks?.length > 0;
   const marks = liveAnnotations(tab).length;
+  const isCurrent = savedTabIsActive(tab);
+  const highlightColor = state?.settings?.activeTabHighlightColor || '#16a568';
+  const query = searchQuery.trim().toLowerCase();
+  const noteMatch = Boolean(query) && collectNoteText(tab).toLowerCase().includes(query);
   const secondaryAction = isManage
     ? `<button class="tab-action danger" data-action="delete-tab" data-project-id="${escapeHtml(project.id)}" data-tab-id="${escapeHtml(tab.id)}" title="删除标签页">${icon('trash', 14)}</button>`
     : `<button class="tab-action${noteReady ? ' note-ready' : ''}" data-action="open-note" data-project-id="${escapeHtml(project.id)}" data-tab-id="${escapeHtml(tab.id)}" title="打开标签页笔记">${icon('note', 14)}</button>`;
   return `
-    <div class="tab-row${selected ? ' selected' : ''}" data-project-id="${escapeHtml(project.id)}" data-tab-id="${escapeHtml(tab.id)}" data-open-tab="true">
+    <div class="tab-row${selected ? ' selected' : ''}${isCurrent ? ' is-current' : ''}"${isCurrent ? ' aria-current="page"' : ''} style="--tab-current-color:${escapeHtml(highlightColor)}" data-project-id="${escapeHtml(project.id)}" data-tab-id="${escapeHtml(tab.id)}" data-open-tab="true">
       ${isManage ? `<input class="tab-check" type="checkbox" data-project-id="${escapeHtml(project.id)}" data-tab-id="${escapeHtml(tab.id)}" ${selected ? 'checked' : ''} aria-label="选择 ${escapeHtml(tab.title)}">` : ''}
       ${faviconMarkup(tab)}
       <div class="tab-text">
         <strong title="${escapeHtml(tab.title)}">${escapeHtml(tab.title || '未命名页面')}</strong>
-        <small>${escapeHtml(tab.domain || tab.url)}${noteReady ? ` · ${tab.note.blocks.length} 条笔记` : ''}${marks ? ` · ${marks} 处标记` : ''}</small>
+        <small>${escapeHtml(tab.domain || tab.url)}${noteReady ? ` · ${tab.note.blocks.length} 条笔记` : ''}${marks ? ` · ${marks} 处标记` : ''}${noteMatch ? ' · 笔记命中' : ''}</small>
       </div>
+      <span class="tab-current-tag" title="当前正在浏览的页面">当前</span>
       <div class="tab-actions${isManage || tab.starred || noteReady || marks ? ' is-visible' : ''}">
         <button class="tab-action${tab.starred ? ' starred' : ''}" data-action="toggle-star" data-project-id="${escapeHtml(project.id)}" data-tab-id="${escapeHtml(tab.id)}" title="${tab.starred ? '取消星标' : '标记重要'}">${icon('star', 14)}</button>
         ${isManage ? '' : `<button class="tab-action${marks ? ' note-ready' : ''}" data-action="open-annotations" data-project-id="${escapeHtml(project.id)}" data-tab-id="${escapeHtml(tab.id)}" title="查看页面标记">${icon('highlight', 14)}</button>`}
@@ -263,11 +346,18 @@ function renderProjectChildren(project, visibleIds) {
 function renderProject(project, visibleIds) {
   const isManage = manageProjectId === project.id;
   const tabs = visibleTabs(project);
-  const projectIsEmptyDueToSearch = searchQuery.trim() && !tabs.length && project.tabs.length;
+  const query = searchQuery.trim().toLowerCase();
+  const projectNoteMatched = Boolean(query) && (project.projectNote?.text || '').toLowerCase().includes(query);
+  const projectIsEmptyDueToSearch = Boolean(query) && !tabs.length && (project.tabs.length > 0 || projectNoteMatched);
+  const searchEmptyMarkup = projectNoteMatched
+    ? `<div class="tab-empty"><strong>项目笔记中有匹配内容</strong>标签页本身没有匹配项。<button data-action="open-project-note" data-project-id="${escapeHtml(project.id)}">打开项目笔记</button></div>`
+    : '<div class="tab-empty">没有匹配的标签页</div>';
   const menuOpen = projectMenuId === project.id;
   const children = childProjects(project.id).filter((child) => visibleIds.has(child.id));
   const draftForProject = projectEditor?.mode === 'create' && projectEditor.parentId === project.id;
-  const isExpanded = !project.collapsed || draftForProject;
+  // 搜索时自动展开包含命中标签页、项目笔记或子文件夹的层级，避免结果藏在折叠目录里。
+  const isSearchResult = Boolean(query) && (tabs.length > 0 || projectNoteMatched || children.length > 0);
+  const isExpanded = !project.collapsed || draftForProject || isSearchResult;
   const hasOpenMenu = projectHasOpenMenu(project, visibleIds);
   const quickActions = project.archived
     ? ''
@@ -287,7 +377,7 @@ function renderProject(project, visibleIds) {
     </div>
     ${isExpanded ? `<div class="project-body">
       ${isManage ? renderManagementToolbar(project) : ''}
-      ${projectIsEmptyDueToSearch && !children.length ? `<div class="tab-empty">没有匹配的标签页</div>` : tabs.length ? `<div class="tab-list">${tabs.map((tab) => renderTab(project, tab, isManage)).join('')}</div>` : children.length || draftForProject ? '' : `<div class="tab-empty"><strong>项目还是空的</strong>点击项目右侧的 +，从浏览器历史中批量添加页面。</div>`}
+      ${projectIsEmptyDueToSearch && !children.length ? searchEmptyMarkup : tabs.length ? `<div class="tab-list">${tabs.map((tab) => renderTab(project, tab, isManage)).join('')}</div>` : children.length || draftForProject ? '' : `<div class="tab-empty"><strong>项目还是空的</strong>点击项目右侧的 +，从浏览器历史中批量添加页面。</div>`}
       ${renderProjectChildren(project, visibleIds)}
     </div>` : ''}
   </section>`;
@@ -330,10 +420,10 @@ function renderNoteModal() {
   if (!noteModal) return '';
   const tab = getTab(noteModal.projectId, noteModal.tabId);
   return `<div class="modal-backdrop" data-backdrop-action="close-note">
-    <section class="modal" role="dialog" aria-modal="true" aria-label="标签页笔记" data-modal="note">
-      <div class="modal-header"><span class="folder-badge">${icon('note', 16)}</span><strong>标签页笔记</strong><span class="grow"></span><button class="icon-button" data-action="close-note" title="关闭">${icon('close')}</button></div>
+    <section class="modal note-modal${noteModal.expanded ? ' is-expanded' : ''}" role="dialog" aria-modal="true" aria-label="标签页笔记" data-modal="note">
+      <div class="modal-header"><span class="folder-badge">${icon('note', 16)}</span><strong>标签页笔记</strong><span class="grow"></span><button class="icon-button" data-action="toggle-note-expand" title="${noteModal.expanded ? '还原窗口' : '放大窗口'}">${icon(noteModal.expanded ? 'collapse' : 'expand', 15)}</button><button class="icon-button" data-action="open-note-window" title="在独立大窗口编辑">${icon('external', 15)}</button><button class="icon-button" data-action="close-note" title="关闭">${icon('close')}</button></div>
       <div class="modal-body">
-        <div style="margin-bottom:12px"><strong>${escapeHtml(tab?.title || '未命名页面')}</strong></div>
+        <div class="note-page-title"><strong>${escapeHtml(tab?.title || '未命名页面')}</strong><small>${escapeHtml(tab?.domain || tab?.url || '')}</small></div>
         <div class="note-blocks" data-note-blocks>${renderNoteBlocks()}</div>
         <div class="field"><label for="note-text">添加文字</label><textarea id="note-text" placeholder="记录你的判断、摘录或下一步行动…">${escapeHtml(noteModal.pendingText || '')}</textarea></div>
         <div class="note-input-row"><input id="note-link" placeholder="粘贴链接（可选标题）"><button class="mini-button" data-action="add-link-draft">${icon('link', 13)}添加链接</button></div>
@@ -341,7 +431,7 @@ function renderNoteModal() {
         <label class="mini-button" style="margin-top:8px;cursor:pointer;width:max-content">${icon('upload', 13)}上传本地图片<input id="note-image-file" type="file" accept="image/*" hidden></label>
         <div style="margin-top:12px;color:var(--muted);font-size:10px">上次编辑：${formatDate(tab?.note?.updatedAt)}</div>
       </div>
-      <div class="modal-footer"><button class="modal-button" data-action="close-note">取消</button><button class="modal-button primary" data-action="save-note">保存笔记</button></div>
+      <div class="modal-footer"><button class="modal-button" data-action="open-note-window">${icon('external', 13)}大窗口编辑</button><span class="grow"></span><button class="modal-button" data-action="close-note">取消</button><button class="modal-button primary" data-action="save-note">保存笔记</button></div>
     </section>
   </div>`;
 }
@@ -458,14 +548,14 @@ function render() {
     ? activeProjects.map((project) => renderProject(project, visibleIds)).join('')
     : projectEditor?.mode === 'create'
       ? ''
-    : `<div class="empty-state compact"><div class="empty-icon">${icon('folder', 21)}</div><strong>${searchQuery ? '没有匹配的项目' : '创建第一个项目'}</strong><p>${searchQuery ? '试试项目名、网页标题或域名。' : '把研究、工作和灵感页面分开管理。'}</p>${searchQuery ? '' : `<button data-action="create-project">${icon('folder-plus', 14)} 创建项目文件夹</button>`}</div>`;
+    : `<div class="empty-state compact"><div class="empty-icon">${icon('folder', 21)}</div><strong>${searchQuery ? '没有匹配的项目' : '创建第一个项目'}</strong><p>${searchQuery ? '试试项目名、网页标题、域名或笔记内容。' : '把研究、工作和灵感页面分开管理。'}</p>${searchQuery ? '' : `<button data-action="create-project">${icon('folder-plus', 14)} 创建项目文件夹</button>`}</div>`;
   const archivedMarkup = archivedProjects.length
     ? `<div class="archived-section"><div class="archived-heading"><span>已归档</span><small>${archivedProjects.length}</small></div>${archivedProjects.map((project) => renderProject(project, visibleIds)).join('')}</div>`
     : '';
   app.innerHTML = `<div class="app-shell">
     <div class="panel-sticky-header">
       ${renderTopbar()}
-      <div class="search-box"><span>${icon('search', 15)}</span><input id="project-search" value="${escapeHtml(searchQuery)}" placeholder="搜索项目或标签页…"></div>
+      <div class="search-box"><span>${icon('search', 15)}</span><input id="project-search" value="${escapeHtml(searchQuery)}" placeholder="搜索项目、标签页或笔记…"></div>
     </div>
     <div class="content">
       <div class="project-list">${renderNewProjectDraft()}${activeMarkup}${archivedMarkup}</div>
@@ -485,6 +575,7 @@ async function refresh() {
   try {
     state = await apiCall('GET_STATE');
     render();
+    await refreshActiveBrowserTab();
   } catch (error) {
     if (!isExtensionContextAlive()) {
       recoverFromInvalidContext();
@@ -560,13 +651,48 @@ async function loadHistory() {
   }
 }
 
-function openNote(projectId, tabId) {
+function noteEditorUrl(projectId, tabId) {
+  const params = new URLSearchParams({ projectId, tabId });
+  return chrome.runtime.getURL(`note-editor.html?${params.toString()}`);
+}
+
+async function openNoteWindow(projectId, tabId) {
+  const url = noteEditorUrl(projectId, tabId);
+  try {
+    if (!chrome.windows?.create) throw new Error('当前环境不支持独立窗口');
+    await chrome.windows.create({ url, type: 'popup', width: 940, height: 820, focused: true });
+  } catch {
+    window.open(url, '_blank', 'noopener');
+  }
+}
+
+async function openNote(projectId, tabId) {
   const tab = getTab(projectId, tabId);
-  noteModal = { projectId, tabId, draft: clone(tab?.note || { blocks: [], updatedAt: null }) };
+  if (!tab) throw new Error('找不到标签页');
+  if (state?.settings?.noteEditorMode === 'window') {
+    await openNoteWindow(projectId, tabId);
+    return;
+  }
+  noteModal = { projectId, tabId, draft: clone(tab.note || { blocks: [], updatedAt: null }), expanded: false };
   projectNoteModal = null;
   annotationModal = null;
   moveModal = null;
   render();
+}
+
+async function openNoteInLargeWindow() {
+  if (!noteModal) return;
+  const { projectId, tabId } = noteModal;
+  const draft = clone(noteModal.draft);
+  const text = document.querySelector('#note-text')?.value.trim();
+  if (text) {
+    draft.blocks.push({ id: `block_${Date.now()}`, type: 'text', value: text, label: '', createdAt: new Date().toISOString() });
+  }
+  await apiCall('SAVE_NOTE', { projectId, tabId, note: draft });
+  noteModal = null;
+  await refresh();
+  await openNoteWindow(projectId, tabId);
+  showToast('已在大窗口打开笔记');
 }
 
 function openProjectNote(projectId) {
@@ -807,7 +933,16 @@ async function handleAction(action, element) {
         await refresh();
         break;
       case 'open-note':
-        openNote(projectId, tabId);
+        await openNote(projectId, tabId);
+        break;
+      case 'toggle-note-expand':
+        if (!noteModal) return;
+        noteModal.pendingText = document.querySelector('#note-text')?.value ?? noteModal.pendingText ?? '';
+        noteModal.expanded = !noteModal.expanded;
+        render();
+        break;
+      case 'open-note-window':
+        await openNoteInLargeWindow();
         break;
       case 'open-annotations': {
         const tab = getTab(projectId, tabId);
@@ -884,7 +1019,7 @@ async function handleAction(action, element) {
         const input = document.querySelector('#note-link');
         const value = input?.value.trim();
         if (!value) return;
-        noteModal.pendingText = document.querySelector('#note-text')?.value.trim() || noteModal.pendingText || '';
+        noteModal.pendingText = document.querySelector('#note-text')?.value ?? '';
         let url;
         try { url = new URL(value).href; } catch { throw new Error('请输入有效链接'); }
         noteModal.draft.blocks.push({ id: `block_${Date.now()}`, type: 'link', value: url, label: url, createdAt: new Date().toISOString() });
@@ -896,7 +1031,7 @@ async function handleAction(action, element) {
         const input = document.querySelector('#note-image-url');
         const value = input?.value.trim();
         if (!value) return;
-        noteModal.pendingText = document.querySelector('#note-text')?.value.trim() || noteModal.pendingText || '';
+        noteModal.pendingText = document.querySelector('#note-text')?.value ?? '';
         if (!/^https?:\/\//i.test(value)) throw new Error('图片 URL 需要以 http(s) 开头');
         noteModal.draft.blocks.push({ id: `block_${Date.now()}`, type: 'image', value, label: '远程图片', createdAt: new Date().toISOString() });
         input.value = '';
@@ -904,9 +1039,10 @@ async function handleAction(action, element) {
         break;
       }
       case 'save-note': {
-        const text = document.querySelector('#note-text')?.value.trim() || noteModal.pendingText?.trim();
-        if (text) noteModal.draft.blocks.push({ id: `block_${Date.now()}`, type: 'text', value: text, label: '', createdAt: new Date().toISOString() });
-        await apiCall('SAVE_NOTE', { projectId: noteModal.projectId, tabId: noteModal.tabId, note: noteModal.draft });
+        const draft = clone(noteModal.draft);
+        const text = (document.querySelector('#note-text')?.value ?? noteModal.pendingText ?? '').trim();
+        if (text) draft.blocks.push({ id: `block_${Date.now()}`, type: 'text', value: text, label: '', createdAt: new Date().toISOString() });
+        await apiCall('SAVE_NOTE', { projectId: noteModal.projectId, tabId: noteModal.tabId, note: draft });
         noteModal = null;
         await refresh();
         showToast('笔记已保存');
@@ -1028,7 +1164,7 @@ app.addEventListener('change', async (event) => {
     else historySelected.delete(key);
     updateHistorySelectionUI();
   } else if (target.id === 'note-image-file' && target.files?.[0]) {
-    noteModal.pendingText = document.querySelector('#note-text')?.value.trim() || noteModal.pendingText || '';
+    noteModal.pendingText = document.querySelector('#note-text')?.value ?? '';
     const file = target.files[0];
     const reader = new FileReader();
     reader.addEventListener('load', () => {
@@ -1044,6 +1180,23 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
     refresh();
   }
 });
+
+chrome.tabs?.onActivated?.addListener(() => scheduleActiveTabRefresh(40));
+chrome.tabs?.onUpdated?.addListener((tabId, changeInfo, tab) => {
+  if (!activeBrowserTab || activeBrowserTab.id !== tabId) return;
+  if (!changeInfo.url && !changeInfo.title) return;
+  activeBrowserTab = {
+    id: tabId,
+    url: tab.url || activeBrowserTab.url,
+    title: tab.title || activeBrowserTab.title
+  };
+  applyActiveTabHighlight();
+});
+chrome.windows?.onFocusChanged?.addListener((windowId) => {
+  if (windowId === chrome.windows.WINDOW_ID_NONE) return;
+  scheduleActiveTabRefresh(80);
+});
+window.addEventListener('focus', () => scheduleActiveTabRefresh(120));
 
 cacheEdgePanelWindowId();
 refresh();

@@ -11,6 +11,9 @@ export const DEFAULT_SETTINGS = {
     startPercent: 20,
     endPercent: 30
   },
+  highlightActiveTab: true,
+  activeTabHighlightColor: '#16a568',
+  noteEditorMode: 'panel',
   autoSync: false,
   autoSyncIntervalHours: 6,
   syncProvider: 'browser',
@@ -96,6 +99,11 @@ function normalizeTriggerWidth(value, sourceVersion) {
   if (!Number.isFinite(number)) return DEFAULT_SETTINGS.triggerWidth;
   if (sourceVersion < 2 && number === 18) return DEFAULT_SETTINGS.triggerWidth;
   return Math.min(80, Math.max(0, Math.round(number)));
+}
+
+function normalizeHexColor(value, fallback) {
+  const color = String(value || '').trim();
+  return /^#[0-9a-f]{6}$/i.test(color) ? color.toLowerCase() : fallback;
 }
 
 function normalizeNote(note) {
@@ -431,6 +439,9 @@ export function normalizeState(value) {
       sidebarMode: settings.sidebarMode === 'fixed' ? 'fixed' : 'edge',
       triggerWidth: normalizeTriggerWidth(settings.triggerWidth, sourceVersion),
       triggerRange: normalizeTriggerRange(settings.triggerRange),
+      highlightActiveTab: asBoolean(settings.highlightActiveTab, DEFAULT_SETTINGS.highlightActiveTab),
+      activeTabHighlightColor: normalizeHexColor(settings.activeTabHighlightColor, DEFAULT_SETTINGS.activeTabHighlightColor),
+      noteEditorMode: settings.noteEditorMode === 'window' ? 'window' : 'panel',
       autoSync: asBoolean(settings.autoSync),
       autoSyncIntervalHours: Math.min(168, Math.max(1, Number(settings.autoSyncIntervalHours) || DEFAULT_SETTINGS.autoSyncIntervalHours)),
       syncProvider: ['browser', 'webdav'].includes(settings.syncProvider) ? settings.syncProvider : 'browser',
@@ -502,6 +513,8 @@ export function icon(name, size = 16) {
     pin: '<path d="M7 3h10l-1.5 7 3 3H5.5l3-3L7 3Z"/><path d="M12 13v8"/>',
     settings: '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.09a2 2 0 0 1 1 1.73v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.51a2 2 0 0 1 1-1.73l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2Z"/><circle cx="12" cy="12" r="3"/>',
     external: '<path d="M14 4h6v6M20 4l-9 9"/><path d="M18 13v4.5A1.5 1.5 0 0 1 16.5 19h-11A1.5 1.5 0 0 1 4 17.5v-11A1.5 1.5 0 0 1 5.5 5H10"/>',
+    expand: '<path d="M9 4H4v5M15 4h5v5M20 15v5h-5M4 15v5h5"/>',
+    collapse: '<path d="M4 9h5V4M20 9h-5V4M15 20v-5h5M9 20v-5H4"/>',
     chevron: '<path d="m8 10 4 4 4-4"/>',
     history: '<path d="M4 12a8 8 0 1 0 2.3-5.7L4 8.7"/><path d="M4 4v4.7h4.7M12 7v5l3.5 2"/>',
     menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
@@ -546,8 +559,17 @@ export function truncate(value, length = 80) {
 
 export function collectNoteText(tab) {
   return (tab?.note?.blocks || [])
-    .map((block) => block.type === 'link' ? `${block.label || ''} ${block.value}` : block.value)
+    .map((block) => {
+      if (!block || typeof block !== 'object') return '';
+      if (block.type === 'link') return `${block.label || ''} ${block.value || ''}`;
+      if (block.type === 'image') {
+        // 图片笔记的 value 可能是巨大的 data URL，搜索/分析时只取文件名或远程地址。
+        return block.label || (/^https?:\/\//i.test(block.value || '') ? block.value : '');
+      }
+      return block.value || '';
+    })
     .join(' ')
+    .replace(/\s+/g, ' ')
     .trim();
 }
 

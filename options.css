@@ -38,6 +38,9 @@ button:focus-visible,input:focus-visible,select:focus-visible { outline:2px soli
 .choice small { display:block; margin:5px 0 0 21px; color:var(--muted); line-height:1.4; font-size:10px; }
 .range-line { display:flex; gap:12px; align-items:center; }
 .range-line input[type="range"] { flex:1; accent-color:var(--green-600); }
+.color-field-row { display:flex; align-items:center; gap:10px; }
+.color-field-row input[type="color"] { width:56px; height:38px; padding:4px; border:1px solid var(--line); border-radius:9px; background:var(--surface-2); cursor:pointer; }
+.color-value { color:var(--green-800); font:700 12px/1 ui-monospace,SFMono-Regular,Consolas,monospace; text-transform:lowercase; }
 .range-value { min-width:47px; color:var(--green-800); font-weight:700; text-align:right; }
 .percent-range-row { display:flex; align-items:end; gap:8px; }
 .percent-field { flex:1; margin:0 !important; color:var(--muted); font-size:11px !important; font-weight:600; }
