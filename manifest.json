@@ -9,7 +9,8 @@
     "tabs",
     "history",
     "sidePanel",
-    "alarms"
+    "alarms",
+    "scripting"
   ],
   "host_permissions": [
     "http://*/*",

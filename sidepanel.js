@@ -206,7 +206,8 @@ function childProjects(projectId) {
 
 function visibleProjectIds() {
   if (!state) return new Set();
-  const visible = new Set(state.projects.filter(projectMatches).map((project) => project.id));
+  // 归档项目不在边栏显示（含搜索），统一在设置页「数据管理 → 归档项目」中管理。
+  const visible = new Set(state.projects.filter((project) => !project.archived && projectMatches(project)).map((project) => project.id));
   const projectsById = new Map(state.projects.map((project) => [project.id, project]));
 
   for (const project of state.projects) {
@@ -543,22 +544,18 @@ function render() {
   const matchingProjects = state.projects.filter((project) => visibleIds.has(project.id));
   const roots = matchingProjects.filter((project) => !project.parentId || !visibleIds.has(project.parentId));
   const activeProjects = roots.filter((project) => !project.archived);
-  const archivedProjects = roots.filter((project) => project.archived);
   const activeMarkup = activeProjects.length
     ? activeProjects.map((project) => renderProject(project, visibleIds)).join('')
     : projectEditor?.mode === 'create'
       ? ''
     : `<div class="empty-state compact"><div class="empty-icon">${icon('folder', 21)}</div><strong>${searchQuery ? '没有匹配的项目' : '创建第一个项目'}</strong><p>${searchQuery ? '试试项目名、网页标题、域名或笔记内容。' : '把研究、工作和灵感页面分开管理。'}</p>${searchQuery ? '' : `<button data-action="create-project">${icon('folder-plus', 14)} 创建项目文件夹</button>`}</div>`;
-  const archivedMarkup = archivedProjects.length
-    ? `<div class="archived-section"><div class="archived-heading"><span>已归档</span><small>${archivedProjects.length}</small></div>${archivedProjects.map((project) => renderProject(project, visibleIds)).join('')}</div>`
-    : '';
   app.innerHTML = `<div class="app-shell">
     <div class="panel-sticky-header">
       ${renderTopbar()}
       <div class="search-box"><span>${icon('search', 15)}</span><input id="project-search" value="${escapeHtml(searchQuery)}" placeholder="搜索项目、标签页或笔记…"></div>
     </div>
     <div class="content">
-      <div class="project-list">${renderNewProjectDraft()}${activeMarkup}${archivedMarkup}</div>
+      <div class="project-list">${renderNewProjectDraft()}${activeMarkup}</div>
     </div>
     ${renderSummary()}
     <div class="toast"></div>

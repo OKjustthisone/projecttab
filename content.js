@@ -95,6 +95,8 @@
   panel.src = chrome.runtime.getURL('edge-panel.html');
   shadow.append(panel, rail);
   document.documentElement.append(host);
+  // 设置读取前先隐藏宿主：排除域名页面上不会闪现触发条，非排除页面随设置恢复显示。
+  host.style.display = 'none';
 
   let isEdgeMode = true;
   let triggerWidth = DEFAULT_TRIGGER_WIDTH;
@@ -103,6 +105,8 @@
   let edgeTriggerArmed = true;
   let pinned = false;
   let lastPointerX = -1; // 最近一次指针事件的页面横坐标，用于区分“光标滑入窗口边框”与“光标真正向右移开”
+  let excludedByDomain = false; // 当前域名命中设置页的边缘触发排除列表
+  let settingsApplied = false; // 首次读到设置前不触发，避免排除域名在加载瞬间闪现面板
 
   const normalizePercent = (value, fallback) => {
     const number = Number(value);
@@ -129,6 +133,37 @@
   const isPointerOverPanel = () => panel.matches(':hover');
 
   const edgeHitWidth = () => Math.max(TRIGGER_EDGE_WIDTH, triggerWidth);
+
+  // 排除域名匹配（与 shared.js 的 normalizeExcludeDomains 语义保持一致）：
+  // 条目允许整段网址/带路径输入，统一取主机名；普通条目匹配本域与全部子域名，
+  // `*.` 前缀条目只匹配子域名。
+  const toHostname = (value) => {
+    let text = String(value ?? '').trim().toLowerCase();
+    if (!text) return '';
+    if (!/^https?:\/\//.test(text)) text = `https://${text}`;
+    try {
+      text = new URL(text).hostname;
+    } catch {
+      text = text.replace(/^https?:\/\//, '').split(/[/?#]/)[0];
+    }
+    return text.replace(/\.$/, '');
+  };
+
+  const normalizeExcludeDomains = (value) => {
+    const list = Array.isArray(value) ? value : typeof value === 'string' ? value.split(/[\n,;，；\s]+/) : [];
+    const result = [];
+    for (const item of list) {
+      const domain = toHostname(item);
+      if (domain && !result.includes(domain)) result.push(domain);
+    }
+    return result;
+  };
+
+  const matchesExcludedDomain = (hostname, entries) => entries.some((entry) => {
+    if (!entry) return false;
+    if (entry.startsWith('*.')) return hostname.endsWith(`.${entry.slice(2)}`);
+    return hostname === entry || hostname.endsWith(`.${entry}`);
+  });
 
   const syncPageShift = () => {
     const shouldPushPage = isEdgeMode && pinned && panel.classList.contains('open');
@@ -166,8 +201,10 @@
   };
 
   const applySettings = (settings, sourceVersion = 2) => {
+    settingsApplied = true;
     isEdgeMode = settings?.sidebarMode !== 'fixed';
-    if (!isEdgeMode) {
+    excludedByDomain = matchesExcludedDomain(window.location.hostname, normalizeExcludeDomains(settings?.excludeDomains));
+    if (!isEdgeMode || excludedByDomain) {
       setPinned(false);
       setOpen(false);
     }
@@ -180,7 +217,8 @@
     const range = normalizeTriggerRange(settings);
     triggerStartPercent = range.start;
     triggerEndPercent = range.end;
-    rail.hidden = !isEdgeMode || panel.classList.contains('open');
+    rail.hidden = !isEdgeMode || excludedByDomain || panel.classList.contains('open');
+    host.style.display = excludedByDomain ? 'none' : '';
     rail.style.setProperty('--pt-trigger-width', `${triggerWidth}px`);
     rail.style.setProperty('--pt-trigger-start', `${triggerStartPercent}%`);
     rail.style.setProperty('--pt-trigger-end', `${triggerEndPercent}%`);
@@ -188,7 +226,7 @@
   };
 
   const isInTriggerZone = (event) => {
-    if (!isEdgeMode) return false;
+    if (!settingsApplied || !isEdgeMode || excludedByDomain) return false;
     const top = window.innerHeight * triggerStartPercent / 100;
     const bottom = window.innerHeight * triggerEndPercent / 100;
     return event.clientX <= edgeHitWidth() && event.clientY >= top && event.clientY <= bottom;

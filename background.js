@@ -495,6 +495,24 @@ async function scheduleSync(state) {
   }
 }
 
+const PAGE_SCRIPT_SETTINGS_KEYS = ['sidebarMode', 'triggerWidth', 'triggerRange', 'excludeDomains'];
+
+// 边栏相关设置变更后，把最新 content.js 重新注入所有已打开的网页：
+// 已打开标签页不会随扩展文件更新而自动换新脚本，重新注入可让排除域名等设置即时生效。
+async function refreshInjectedPages() {
+  try {
+    const tabs = await chrome.tabs.query({ url: ['http://*/*', 'https://*/*'] });
+    const results = await Promise.allSettled(
+      tabs
+        .filter((tab) => tab.id != null)
+        .map((tab) => chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['content.js'] }))
+    );
+    return results.filter((result) => result.status === 'fulfilled').length;
+  } catch {
+    return 0;
+  }
+}
+
 async function updateSettings(patch) {
   const state = await loadState();
   const previous = JSON.stringify(state.settings);
@@ -510,6 +528,9 @@ async function updateSettings(patch) {
   }
   const next = await saveState(state);
   await scheduleSync(next);
+  if (Object.keys(patch || {}).some((key) => PAGE_SCRIPT_SETTINGS_KEYS.includes(key))) {
+    await refreshInjectedPages();
+  }
   return next;
 }
 

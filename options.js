@@ -4,6 +4,11 @@ const app = document.querySelector('#options-app');
 let state = null;
 let toastTimer = null;
 let sidePanelWindowId = null;
+// 归档项目管理区（数据管理卡片内）的本地 UI 状态，默认收起。
+let archivesOpen = false;
+let archiveMenuId = null;
+let archiveEditId = null;
+let archiveDeleteConfirmId = null;
 
 const AI_PRESETS = [
   { id: 'local', label: '本地分析（无需 API）', endpoint: '', model: '' },
@@ -51,6 +56,9 @@ function render() {
   const projects = state.projects.filter((project) => !project.parentId).length;
   const tabs = state.projects.reduce((sum, project) => sum + project.tabs.length, 0);
   const notes = state.projects.reduce((sum, project) => sum + project.tabs.reduce((tabSum, tab) => tabSum + (tab.note?.blocks?.length || 0), 0), 0);
+  // 重建表单（如展开/收起归档列表）时，保留排除域名输入框里尚未保存的内容，避免丢字。
+  const excludeTextarea = document.querySelector('#exclude-domains');
+  const excludeDomainsText = excludeTextarea ? excludeTextarea.value : (settings.excludeDomains || []).join('\n');
   app.innerHTML = `<div class="settings-shell">
     <header class="settings-hero"><div class="mark"><img src="logo.png" alt="Project Tab"></div><div class="hero-copy"><h1>Project Tab 设置</h1><p>管理边栏、同步方式与 AI 笔记分析。项目数据不会写入浏览器收藏夹。</p></div><button class="hero-link" data-action="open-sidepanel">${icon('menu', 14)}打开主面板</button></header>
     <div class="grid">
@@ -59,11 +67,13 @@ function render() {
           <div class="field"><label>显示方式</label><div class="choice-row"><label class="choice"><input type="radio" name="sidebarMode" value="fixed" ${settings.sidebarMode === 'fixed' ? 'checked' : ''}><strong>固定显示</strong><small>使用浏览器 Side Panel 持续打开</small></label><label class="choice"><input type="radio" name="sidebarMode" value="edge" ${settings.sidebarMode === 'edge' ? 'checked' : ''}><strong>左侧边缘触发</strong><small>鼠标靠近网页左边缘时显示触发条</small></label></div></div>
           <div class="field"><label>触发高度范围</label><div class="percent-range-row"><label class="percent-field" for="trigger-start"><span>从顶部</span><span class="percent-input"><input id="trigger-start" type="number" min="0" max="99" step="1" value="${settings.triggerRange.startPercent}"><span>%</span></span></label><span class="percent-separator">至</span><label class="percent-field" for="trigger-end"><span>到顶部</span><span class="percent-input"><input id="trigger-end" type="number" min="1" max="100" step="1" value="${settings.triggerRange.endPercent}"><span>%</span></span></label><span class="range-value" id="trigger-range-value">${settings.triggerRange.startPercent}% – ${settings.triggerRange.endPercent}%</span></div><div class="help">按网页高度从上到下计算，0% 是顶部、100% 是底部。只有这段左侧区域会触发面板，例如 20%–30%。</div></div>
           <div class="field"><label for="trigger-width">触发条宽度</label><div class="range-line"><input id="trigger-width" type="range" min="0" max="80" step="1" value="${settings.triggerWidth}"><span class="range-value" id="trigger-width-value">${settings.triggerWidth}px</span></div><div class="help">默认为 0px，不显示绿色触发条；光标必须贴住页面左缘（约 1px 内）才能打开面板，面板打开后光标移入窗口边框不会收起，向右移开才会自动关闭。</div></div>
-          <div class="field"><label class="switch-row"><input id="auto-sync" type="checkbox" ${settings.autoSync ? 'checked' : ''}><span>开启自动同步</span></label><div class="help">开启后本地修改会在数秒内自动与选定的目的地（浏览器同步空间或 WebDAV）双向合并，定时与浏览器启动时也会执行。合并按项目/标签页的修改时间取较新一方，双方的新增和修改都会保留。</div></div>
-          <div class="field"><label for="auto-sync-hours">自动同步间隔（小时）</label><input id="auto-sync-hours" type="number" min="1" max="168" value="${settings.autoSyncIntervalHours}"></div>
+          <div class="field"><label for="exclude-domains">边缘触发排除域名</label><textarea id="exclude-domains" rows="4" placeholder="例如：&#10;example.com&#10;*.internal.example.com">${escapeHtml(excludeDomainsText)}</textarea><div class="help">每行一个域名（逗号、分号分隔也可以），会自动去掉地址中的协议和路径。填写 example.com 时该域名及其全部子域名（如 docs.example.com）的网页都禁用边缘触发；以 *. 开头只匹配子域名本身。填入后点击「保存边栏设置」，或直接在输入框外点击一下即可保存生效。</div></div>
+          <div class="actions"><button class="button primary" data-action="save-settings">保存边栏设置</button></div>
         </section>
         <section class="card"><div class="section-head"><div><h2>同步方式</h2><p>支持浏览器账户同步或自有 WebDAV 文件。</p></div></div>
           <div class="field"><label for="sync-provider">默认同步目的地</label><select id="sync-provider"><option value="browser" ${settings.syncProvider === 'browser' ? 'selected' : ''}>浏览器账户同步（Chrome / Edge）</option><option value="webdav" ${settings.syncProvider === 'webdav' ? 'selected' : ''}>WebDAV</option></select></div>
+          <div class="field"><label class="switch-row"><input id="auto-sync" type="checkbox" ${settings.autoSync ? 'checked' : ''}><span>开启自动同步</span></label><div class="help">开启后本地修改会在数秒内自动与上面选定的目的地（浏览器同步空间或 WebDAV）双向合并，定时与浏览器启动时也会执行。合并按项目/标签页的修改时间取较新一方，双方的新增和修改都会保留。</div></div>
+          <div class="field"><label for="auto-sync-hours">自动同步间隔（小时）</label><input id="auto-sync-hours" type="number" min="1" max="168" value="${settings.autoSyncIntervalHours}"></div>
           <div class="field"><label for="webdav-url">WebDAV 文件或目录地址</label><input id="webdav-url" type="url" value="${escapeHtml(settings.webdav.url)}" placeholder="https://dav.jianguoyun.com/dav/projecttab/project-tab.json"><div class="help">可填写文件地址，也可填写目录地址；目录地址会自动使用其中的 project-tab.json，但父目录需先在坚果云中存在。坚果云可填写 /dav/projecttab 或 /dav/projecttab/，密码请使用第三方应用密码。账号密码仅保存在本机扩展存储中。</div></div>
           <div class="field"><label for="webdav-user">WebDAV 用户名</label><input id="webdav-user" type="text" value="${escapeHtml(settings.webdav.username)}" autocomplete="off"></div>
           <div class="field"><label for="webdav-password">WebDAV 密码</label><input id="webdav-password" type="password" value="${escapeHtml(settings.webdav.password)}" autocomplete="off"></div>
@@ -88,6 +98,7 @@ function render() {
         <section class="card"><div class="section-head"><div><h2>数据管理</h2><p>导出的是 Project Tab 自己的 JSON，不含浏览器收藏夹。</p></div></div>
           <div class="data-stat"><div class="stat"><strong>${projects}</strong><span>项目</span></div><div class="stat"><strong>${tabs}</strong><span>标签页</span></div><div class="stat"><strong>${notes}</strong><span>笔记块</span></div></div>
           <div class="actions"><button class="button" data-action="export-json">${icon('download', 14)}导出 JSON</button><label class="button file-button">${icon('upload', 14)}导入 JSON<input id="import-json" type="file" accept="application/json,.json"></label></div>
+          ${renderArchivedSection()}
           <p class="footer-note">提示：图片笔记会以 data URL 存进 JSON，文件可能较大。跨设备同步前可以先导出一份备份。</p>
         </section>
       </div>
@@ -138,6 +149,10 @@ function formSettings() {
   return {
     sidebarMode: document.querySelector('input[name="sidebarMode"]:checked')?.value || 'edge',
     triggerWidth: readNumber('#trigger-width', 0),
+    excludeDomains: (document.querySelector('#exclude-domains')?.value || '')
+      .split(/[\n,;，；\s]+/)
+      .map((item) => item.trim())
+      .filter(Boolean),
     triggerRange: {
       startPercent: readNumber('#trigger-start', 20),
       endPercent: readNumber('#trigger-end', 30)
@@ -163,8 +178,20 @@ function formSettings() {
 
 async function saveSettings() {
   state = await apiCall('UPDATE_SETTINGS', { patch: formSettings() });
+  const excludeTextarea = document.querySelector('#exclude-domains');
+  if (excludeTextarea) excludeTextarea.value = state.settings.excludeDomains.join('\n');
   render();
   notify('设置已保存');
+}
+
+// 排除域名输入框失焦时静默保存：只提交该字段，不重建表单（避免清掉其他正在编辑的输入），
+// 保存成功后把归一化结果（去掉协议/路径）回填到输入框，让用户确认保存内容。
+async function saveExcludeDomainsQuietly() {
+  const patch = { excludeDomains: formSettings().excludeDomains };
+  state = await apiCall('UPDATE_SETTINGS', { patch });
+  const textarea = document.querySelector('#exclude-domains');
+  if (textarea) textarea.value = state.settings.excludeDomains.join('\n');
+  notify('边缘触发排除域名已保存');
 }
 
 async function sync(direction, provider) {
@@ -237,6 +264,42 @@ function exportJson() {
   notify('JSON 已导出');
 }
 
+function resetArchiveUi() {
+  archiveMenuId = null;
+  archiveEditId = null;
+  archiveDeleteConfirmId = null;
+}
+
+// 数据管理卡片内的「归档项目」折叠区：默认收起，展开后只列项目名，
+// 右侧三点菜单提供重命名、恢复项目、删除项目。
+function renderArchivedSection() {
+  const archived = state.projects.filter((project) => project.archived);
+  const rows = archived.map((project) => {
+    if (archiveEditId === project.id) {
+      return `<div class="archive-row editing" data-project-id="${escapeHtml(project.id)}">
+        <input id="archive-rename-input" value="${escapeHtml(project.name)}" maxlength="60" aria-label="重命名归档项目">
+        <button class="archive-menu-button" data-action="archive-rename-commit" data-project-id="${escapeHtml(project.id)}" title="确认重命名">${icon('check', 14)}</button>
+        <button class="archive-menu-button" data-action="archive-rename-cancel" title="取消重命名">${icon('x', 14)}</button>
+      </div>`;
+    }
+    const menuOpen = archiveMenuId === project.id;
+    const deleting = archiveDeleteConfirmId === project.id;
+    return `<div class="archive-row${menuOpen ? ' has-menu' : ''}" data-project-id="${escapeHtml(project.id)}">
+      <span class="archive-name" title="${escapeHtml(project.name)}">${escapeHtml(project.name)}</span>
+      <button class="archive-menu-button" data-action="archive-menu" data-project-id="${escapeHtml(project.id)}" aria-label="${escapeHtml(project.name)} 的更多操作">${icon('menuDots', 14)}</button>
+      ${menuOpen ? `<div class="archive-menu" role="menu" aria-label="${escapeHtml(project.name)} 的归档操作">
+        <button data-action="archive-rename" data-project-id="${escapeHtml(project.id)}" role="menuitem">${icon('pencil', 14)}<span>重命名</span></button>
+        <button data-action="archive-restore" data-project-id="${escapeHtml(project.id)}" role="menuitem">${icon('archive', 14)}<span>恢复项目</span></button>
+        <button data-action="archive-delete" data-project-id="${escapeHtml(project.id)}" role="menuitem" class="${deleting ? 'danger' : ''}">${icon('trash', 14)}<span>${deleting ? '确认删除' : '删除项目'}</span></button>
+      </div>` : ''}
+    </div>`;
+  }).join('');
+  return `<div class="field archive-field">
+    <button type="button" class="button archive-toggle" data-action="toggle-archives">${icon('archive', 14)}<span>归档项目</span><span class="archive-count">${archived.length}</span><span class="archive-caret">${archivesOpen ? '▾' : '▸'}</span></button>
+    ${archivesOpen ? `<div class="archive-list">${rows || '<p class="archive-empty">暂无归档项目。</p>'}</div><div class="help">归档项目只在设置页管理，不在主面板列表显示；恢复后重新回到面板，删除会连同子目录与标签页一并移除。</div>` : ''}
+  </div>`;
+}
+
 app.addEventListener('input', (event) => {
   if (event.target.id === 'active-tab-highlight-color') {
     const value = document.querySelector('#active-tab-highlight-color-value');
@@ -263,12 +326,45 @@ app.addEventListener('input', (event) => {
   }
 });
 
+// 归档项目重命名：提交给 RENAME_PROJECT，空名保持原名。
+async function commitArchiveRename(projectId) {
+  const name = document.querySelector('#archive-rename-input')?.value.trim() || '';
+  if (name) state = await apiCall('RENAME_PROJECT', { projectId, name });
+  archiveEditId = null;
+  archiveMenuId = null;
+  render();
+  notify(name ? '归档项目已重命名' : '名称为空，未修改');
+}
+
+app.addEventListener('keydown', (event) => {
+  if (event.target.id !== 'archive-rename-input') return;
+  const projectId = event.target.closest('.archive-row')?.dataset.projectId;
+  if (!projectId) return;
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    commitArchiveRename(projectId).catch((error) => notify(isExtensionContextAlive() ? error.message : CONTEXT_INVALIDATED_MESSAGE, true));
+  } else if (event.key === 'Escape') {
+    event.preventDefault();
+    archiveEditId = null;
+    render();
+  }
+});
+
 app.addEventListener('change', async (event) => {
   if (event.target.id === 'ai-preset') {
     const preset = AI_PRESETS.find((item) => item.id === event.target.value);
     if (preset && preset.endpoint !== null) {
       document.querySelector('#ai-endpoint').value = preset.endpoint;
       document.querySelector('#ai-model').value = preset.model;
+    }
+    return;
+  }
+  if (event.target.id === 'exclude-domains') {
+    try {
+      await saveExcludeDomainsQuietly();
+    } catch (error) {
+      const message = isExtensionContextAlive() ? error.message : CONTEXT_INVALIDATED_MESSAGE;
+      notify(message, true);
     }
     return;
   }
@@ -286,11 +382,65 @@ app.addEventListener('change', async (event) => {
 
 app.addEventListener('click', async (event) => {
   const button = event.target.closest('[data-action]');
-  if (!button) return;
+  if (!button) {
+    // 点击菜单以外的空白处时收起归档项目的三点菜单；表单控件（输入框/单选等）除外，
+    // 避免重建表单覆盖用户刚点击或正在输入的状态。
+    if (archiveMenuId && !event.target.closest('.archive-menu') && !event.target.closest('input, select, textarea, label')) {
+      archiveMenuId = null;
+      render();
+    }
+    return;
+  }
+  const archiveProjectId = button.dataset.projectId;
   try {
     switch (button.dataset.action) {
       case 'save-settings':
         await saveSettings();
+        break;
+      case 'toggle-archives': {
+        archivesOpen = !archivesOpen;
+        resetArchiveUi();
+        render();
+        break;
+      }
+      case 'archive-menu': {
+        archiveMenuId = archiveMenuId === archiveProjectId ? null : archiveProjectId;
+        archiveEditId = null;
+        archiveDeleteConfirmId = archiveMenuId === archiveProjectId ? archiveDeleteConfirmId : null;
+        render();
+        break;
+      }
+      case 'archive-rename': {
+        archiveEditId = archiveProjectId;
+        archiveMenuId = null;
+        archiveDeleteConfirmId = null;
+        render();
+        document.querySelector('#archive-rename-input')?.focus();
+        break;
+      }
+      case 'archive-rename-commit':
+        await commitArchiveRename(archiveProjectId);
+        break;
+      case 'archive-rename-cancel':
+        archiveEditId = null;
+        render();
+        break;
+      case 'archive-restore':
+        state = await apiCall('ARCHIVE_PROJECT', { projectId: archiveProjectId, archived: false });
+        resetArchiveUi();
+        render();
+        notify('项目已恢复到主面板');
+        break;
+      case 'archive-delete':
+        if (archiveDeleteConfirmId !== archiveProjectId) {
+          archiveDeleteConfirmId = archiveProjectId;
+          render();
+          break;
+        }
+        state = await apiCall('DELETE_PROJECT', { projectId: archiveProjectId });
+        resetArchiveUi();
+        render();
+        notify('归档项目已删除');
         break;
       case 'sync-both':
         await sync('both');

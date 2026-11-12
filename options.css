@@ -6,8 +6,8 @@
 }
 * { box-sizing:border-box; }
 html,body { margin:0; min-height:100%; background:var(--surface-2); }
-button,input,select { font:inherit; }
-button:focus-visible,input:focus-visible,select:focus-visible { outline:2px solid rgba(22,165,104,.55); outline-offset:1px; }
+button,input,select,textarea { font:inherit; }
+button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible { outline:2px solid rgba(22,165,104,.55); outline-offset:1px; }
 .settings-shell { max-width:920px; margin:0 auto; padding:36px 22px 60px; }
 .settings-hero { display:flex; align-items:center; gap:13px; margin-bottom:26px; }
 .mark { width:44px; height:44px; display:grid; place-items:center; background:transparent; }
@@ -29,7 +29,8 @@ button:focus-visible,input:focus-visible,select:focus-visible { outline:2px soli
 .field:last-child { margin-bottom:0; }
 .field label { display:block; margin-bottom:7px; color:var(--muted); font-size:12px; font-weight:600; }
 .field input[type="text"],.field input[type="password"],.field input[type="url"],.field input[type="number"],.field select { width:100%; height:38px; border:1px solid var(--line); border-radius:9px; padding:0 10px; color:var(--ink); background:var(--surface-2); }
-.field input:focus,.field select:focus { border-color:var(--green-600); outline:0; box-shadow:0 0 0 3px rgba(22,165,104,.08); }
+.field input:focus,.field select:focus,.field textarea:focus { border-color:var(--green-600); outline:0; box-shadow:0 0 0 3px rgba(22,165,104,.08); }
+.field textarea { width:100%; min-height:88px; resize:vertical; border:1px solid var(--line); border-radius:9px; padding:8px 10px; color:var(--ink); background:var(--surface-2); line-height:1.55; }
 .choice-row { display:flex; gap:8px; }
 .choice { flex:1; padding:11px 12px; border:1px solid var(--line); border-radius:10px; background:var(--surface-2); cursor:pointer; }
 .choice:has(input:checked) { border-color:var(--green-600); background:var(--green-050); box-shadow:0 0 0 2px rgba(22,165,104,.08); }
@@ -69,6 +70,23 @@ button:focus-visible,input:focus-visible,select:focus-visible { outline:2px soli
 .stat strong { display:block; font-size:19px; }
 .stat span { display:block; margin-top:4px; color:var(--muted); font-size:10px; }
 .file-button input { display:none; }
+.archive-field { margin-top:14px; }
+.archive-toggle { width:100%; justify-content:flex-start; gap:8px; }
+.archive-count { min-width:22px; padding:1px 7px; border-radius:99px; background:var(--green-100); color:var(--green-800); font-size:11px; font-weight:700; text-align:center; }
+.archive-caret { margin-left:auto; color:var(--muted); }
+.archive-list { margin-top:10px; border:1px solid var(--line); border-radius:10px; background:var(--surface-2); padding:6px; }
+.archive-row { position:relative; display:flex; align-items:center; gap:6px; padding:7px 9px; border-radius:8px; }
+.archive-row:hover { background:var(--green-050); }
+.archive-row.editing { background:var(--green-050); }
+.archive-row.editing input { flex:1; min-height:30px; border:1px solid var(--green-600); border-radius:8px; padding:0 9px; color:var(--ink); background:var(--surface); }
+.archive-name { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; }
+.archive-menu-button { display:inline-flex; align-items:center; justify-content:center; width:26px; height:26px; border:0; border-radius:7px; color:var(--muted); background:transparent; cursor:pointer; }
+.archive-menu-button:hover { background:var(--green-100); color:var(--green-800); }
+.archive-menu { position:absolute; right:8px; top:calc(100% - 4px); z-index:40; display:flex; flex-direction:column; min-width:138px; padding:4px; border:1px solid var(--line); border-radius:10px; background:var(--surface); box-shadow:0 10px 28px rgba(15,60,40,.18); }
+.archive-menu button { display:flex; align-items:center; gap:8px; padding:8px 10px; border:0; border-radius:7px; background:transparent; color:var(--ink); font-size:12px; text-align:left; cursor:pointer; }
+.archive-menu button:hover { background:var(--green-100); }
+.archive-menu button.danger { color:var(--danger); }
+.archive-empty { margin:6px; color:var(--muted); font-size:12px; }
 .footer-note { margin-top:20px; color:var(--muted); line-height:1.7; font-size:11px; }
 .toast { position:fixed; left:50%; bottom:22px; padding:10px 14px; border-radius:9px; color:white; background:#215a42; transform:translate(-50%,10px); opacity:0; transition:.18s ease; pointer-events:none; font-size:12px; }
 .toast.show { opacity:1; transform:translate(-50%,0); }

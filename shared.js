@@ -11,6 +11,7 @@ export const DEFAULT_SETTINGS = {
     startPercent: 20,
     endPercent: 30
   },
+  excludeDomains: [],
   highlightActiveTab: true,
   activeTabHighlightColor: '#16a568',
   noteEditorMode: 'panel',
@@ -99,6 +100,33 @@ function normalizeTriggerWidth(value, sourceVersion) {
   if (!Number.isFinite(number)) return DEFAULT_SETTINGS.triggerWidth;
   if (sourceVersion < 2 && number === 18) return DEFAULT_SETTINGS.triggerWidth;
   return Math.min(80, Math.max(0, Math.round(number)));
+}
+
+// 边缘触发排除域名：允许整段网址/带路径输入，统一只保留主机名；`*.` 通配前缀原样保留。
+function normalizeDomainEntry(value) {
+  let text = String(value ?? '').trim().toLowerCase();
+  if (!text) return '';
+  if (!/^https?:\/\//.test(text)) text = `https://${text}`;
+  try {
+    text = new URL(text).hostname;
+  } catch {
+    text = text.replace(/^https?:\/\//, '').split(/[/?#]/)[0];
+  }
+  return text.replace(/\.$/, '');
+}
+
+function normalizeExcludeDomains(value) {
+  const list = Array.isArray(value)
+    ? value
+    : typeof value === 'string'
+      ? value.split(/[\n,;，；\s]+/)
+      : [];
+  const result = [];
+  for (const item of list) {
+    const domain = normalizeDomainEntry(item);
+    if (domain && !result.includes(domain)) result.push(domain);
+  }
+  return result;
 }
 
 function normalizeHexColor(value, fallback) {
@@ -439,6 +467,7 @@ export function normalizeState(value) {
       sidebarMode: settings.sidebarMode === 'fixed' ? 'fixed' : 'edge',
       triggerWidth: normalizeTriggerWidth(settings.triggerWidth, sourceVersion),
       triggerRange: normalizeTriggerRange(settings.triggerRange),
+      excludeDomains: normalizeExcludeDomains(settings.excludeDomains),
       highlightActiveTab: asBoolean(settings.highlightActiveTab, DEFAULT_SETTINGS.highlightActiveTab),
       activeTabHighlightColor: normalizeHexColor(settings.activeTabHighlightColor, DEFAULT_SETTINGS.activeTabHighlightColor),
       noteEditorMode: settings.noteEditorMode === 'window' ? 'window' : 'panel',
